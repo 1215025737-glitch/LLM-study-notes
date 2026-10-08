@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>大模型评测与不确定性量化</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<style>
+  :root{
+    --bg:#F5F6F8; --card:#FFFFFF; --ink:#1C1E21; --ink2:#5A6069; --ink3:#8A9099;
+    --line:#E4E7EB; --line2:#D3D7DD; --accent:#185FA5; --accent-soft:#E6F1FB;
+    --teal:#0F6E56; --teal-soft:#E1F5EE; --amber:#854F0B; --amber-soft:#FAEEDA;
+    --red:#A32D2D; --red-soft:#FCEBEB; --purple:#534AB7; --purple-soft:#EEEDFE;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family:"PingFang SC","Microsoft YaHei","Helvetica Neue",Arial,sans-serif;
+    font-size:16px; line-height:1.7;
+  }
+  /* ---------- 顶栏 ---------- */
+  #bar{
+    position:sticky; top:0; z-index:50; background:rgba(255,255,255,.96);
+    border-bottom:1px solid var(--line); padding:8px 16px;
+    display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+    backdrop-filter:blur(6px);
+  }
+  #bar .title{font-weight:600; font-size:14px; margin-right:8px; color:var(--ink);}
+  #bar button{
+    font:inherit; font-size:13px; padding:5px 11px; border-radius:7px;
+    border:1px solid var(--line2); background:#fff; color:var(--ink); cursor:pointer;
+  }
+  #bar button:hover{background:var(--accent-soft); border-color:var(--accent); color:var(--accent);}
+  #bar button.on{background:var(--accent); color:#fff; border-color:var(--accent);}
+  #bar .spacer{flex:1;}
+  #bar .hint{font-size:12px; color:var(--ink3);}
+  /* ---------- 布局 ---------- */
+  #wrap{display:block; max-width:1180px; margin:0 auto;}
+  #main{padding:20px 24px 60px;}
+  /* ---------- 幻灯片 ---------- */
+  .slide{
+    display:none; background:var(--card); border:1px solid var(--line);
+    border-radius:14px; padding:34px 40px 40px; min-height:600px;
+    box-shadow:0 1px 3px rgba(20,25,35,.06);
+  }
+  .slide.active{display:block;}
+  .slide h1{
+    font-size:34px; line-height:1.35; margin:0 0 6px; font-weight:700; letter-spacing:.5px;
+  }
+  .slide h2{
+    font-size:23px; margin:0 0 18px; padding-bottom:10px; font-weight:700;
+    border-bottom:2px solid var(--accent); color:var(--accent);
+  }
+  .slide h3{font-size:17px; margin:22px 0 8px; font-weight:700; color:var(--ink);}
+  .slide p{margin:8px 0;}
+  .slide ul, .slide ol{margin:8px 0 8px; padding-left:22px;}
+  .slide li{margin:5px 0;}
+  .sub{color:var(--ink2); font-size:14px;}
+  .kicker{
+    display:inline-block; font-size:12px; letter-spacing:2px; color:var(--accent);
+    background:var(--accent-soft); padding:3px 10px; border-radius:20px; margin-bottom:12px;
+  }
+  table{width:100%; border-collapse:collapse; margin:12px 0; font-size:14px;}
+  th,td{border:1px solid var(--line2); padding:7px 10px; text-align:left; vertical-align:top;}
+  th{background:#F0F2F5; font-weight:700;}
+  tbody tr:nth-child(even){background:#FAFBFC;}
+  .box{
+    border:1px solid var(--line2); border-left:4px solid var(--accent);
+    background:var(--accent-soft); border-radius:8px; padding:12px 16px; margin:14px 0;
+  }
+  .box.warn{border-left-color:var(--amber); background:var(--amber-soft);}
+  .box.bad{border-left-color:var(--red); background:var(--red-soft);}
+  .box.good{border-left-color:var(--teal); background:var(--teal-soft);}
+  .box.pur{border-left-color:var(--purple); background:var(--purple-soft);}
+  .box .bt{font-weight:700; margin-bottom:4px; font-size:14px;}
+  .cols{display:flex; gap:18px; flex-wrap:wrap;}
+  .col{flex:1 1 300px; min-width:280px;}
+  .card{border:1px solid var(--line2); border-radius:10px; padding:14px 16px; background:#FCFCFD;}
+  .card .ct{font-weight:700; font-size:15px; margin-bottom:6px;}
+  .tag{display:inline-block; font-size:12px; padding:2px 8px; border-radius:5px; background:#EEF1F4; color:var(--ink2); margin-right:6px;}
+  code{background:#F0F2F5; padding:1px 5px; border-radius:4px; font-family:"SFMono-Regular",Consolas,monospace; font-size:13px;}
+  pre{
+    background:#F7F8FA; border:1px solid var(--line); border-radius:8px;
+    padding:12px 14px; overflow:auto; font-size:13px; line-height:1.6;
+    font-family:"SFMono-Regular",Consolas,monospace;
+  }
+  /* ---------- 公式 ---------- */
+  .math{white-space:nowrap;}
+  .math.block{display:block; text-align:center; margin:14px 0; white-space:normal;}
+  .math.fallback::before{content:attr(data-tex); font-family:Consolas,monospace; font-size:14px; color:var(--ink2);}
+  .math.fallback{background:#F7F8FA; border:1px dashed var(--line2); border-radius:4px; padding:1px 6px;}
+  .math.fallback > *{display:none;}
+  body.editing .math{
+    background:var(--amber-soft); border:1px solid #EFD9AE; border-radius:4px;
+    padding:1px 4px; font-family:Consolas,monospace; font-size:13px; color:var(--amber);
+    cursor:pointer;
+  }
+  body.editing .math::before{content:"$" attr(data-tex) "$"; white-space:normal;}
+  body.editing .math > *{display:none;}
+  /* ---------- 页脚 ---------- */
+  #foot{
+    display:flex; align-items:center; justify-content:center; gap:14px;
+    padding:14px 0 0; color:var(--ink3); font-size:13px;
+  }
+  #foot button{
+    font:inherit; font-size:13px; padding:6px 16px; border-radius:7px;
+    border:1px solid var(--line2); background:#fff; cursor:pointer; color:var(--ink);
+  }
+  #foot button:hover{background:var(--accent-soft); border-color:var(--accent); color:var(--accent);}
+  /* ---------- 编辑模式 ---------- */
+  body.editing .slide{outline:2px dashed #EFD9AE; outline-offset:-6px;}
+  body.editing [contenteditable="true"]:focus{outline:2px solid var(--accent); outline-offset:2px;}
+  body.editing .noedit{opacity:.55;}
+  /* ---------- 打印 ---------- */
+  @media print{
+    #bar,#foot{display:none !important;}
+    #main{padding:0;}
+    body{background:#fff;}
+    .slide{display:block !important; border:none; box-shadow:none; page-break-after:always; min-height:auto;}
+    .slide.active{display:block !important;}
+  }
+</style>
+</head>
+<body class=""
+
+<div id="bar">
+  <span class="title">大模型评测与不确定性量化</span>
+  <button id="btnPrev">← 上一页</button>
+  <button id="btnNext">下一页 →</button>
+  <button id="btnEdit" class="">编辑模式</button>
+  <button id="btnAdd">＋ 新增一页</button>
+  <button id="btnDel">删除本页</button>
+  <span class="spacer"></span>
+  <span class="hint" id="hint">← → 翻页 · E 编辑 · F 全屏</span>
+  <button id="btnSave">保存</button>
+  <button id="btnMd">导出 Markdown</button>
+  <button id="btnHtml">导出 HTML</button>
+  <button id="btnPrint">打印 / PDF</button>
+  <button id="btnReset">重置</button>
+</div>
+
+<div id="wrap">
+  <main id="main">
+    <div id="deck">
+
+<!-- ============ 封面 ============ -->
+<section class="slide active" data-part="封面">
+  <div class="kicker">GROUP MEETING</div>
+  <h1>大模型评测与不确定性量化</h1>
+  <p class="sub" style="font-size:19px;">从 Benchmark 排名方式，到让模型自己说出置信度</p>
+  <div style="height:14px"></div>
+  <div class="cols">
+    <div class="col card">
+      <div class="ct">① Benchmark 与排名</div>
+      <p class="sub">主流榜单测什么、怎么评、怎么排名；二值 0/1 打分丢失了什么。</p>
+    </div>
+    <div class="col card">
+      <div class="ct">② 模型自评置信度</div>
+      <p class="sub">口头置信的可行性与校准验证；闭源场景下的取数路径。</p>
+    </div>
+  </div>
+  <div class="cols" style="margin-top:12px;">
+    <div class="col card">
+      <div class="ct">③ IRT：从 0/1 到多级计分</div>
+      <p class="sub">GRM / PCM / GPCM 能否解决"阶梯式"评分，前提条件与陷阱。</p>
+    </div>
+    <div class="col card">
+      <div class="ct">④ Jev 模型与 UQ 启示</div>
+      <p class="sub">一个把校准做成训练目标的极端样本，及其对不确定性量化的启发。</p>
+    </div>
+  </div>
+  <div style="height:24px"></div>
+  <p class="sub">本页可编辑：点击顶部「编辑模式」后直接改文字，双击公式可改 LaTeX。</p>
+</section>
+
+<!-- ============ 目录 ============ -->
+<section class="slide" data-part="概览">
+  <h2>目录</h2>
+  <ol>
+    <li><b>Part 1 · 主流 Benchmark 与它们的排名方式</b><br><span class="sub">客观能力类 / 代码智能体类 / 主观偏好类；准确率、pass@k、ELO、IRT</span></li>
+    <li><b>Part 2 · 让模型自己给出置信度</b><br><span class="sub">口头置信的定义、校准的数学含义、可照搬的造数据流程、闭源取数路径</span></li>
+    <li><b>Part 3 · IRT 评价为何被二值困住，GRM/PCM 能补什么</b><br><span class="sub">1PL/2PL/3PL → GRM/GPCM；部分正确、分步给分、rubric 打分</span></li>
+    <li><b>Part 4 · Jev 模型与对不确定性量化的启示</b><br><span class="sub">受限输出空间 + 恰当评分规则；级联架构；五条可迁移启示</span></li>
+  </ol>
+  <div class="box">
+    <div class="bt">贯穿全篇的一条主线</div>
+    现有评测几乎只记录 <b>答对 / 答错一个比特</b>，把模型"有多确定"的信息全部丢掉。本汇报的四部分，分别回答：<b>丢在哪 → 怎么拿回来 → 怎么更精细地建模 → 有没有人做得更彻底。</b>
+  </div>
+</section>
+
+<!-- ============ Part 1 ============ -->
+<section class="slide" data-part="Part 1 Benchmark">
+  <div class="kicker">PART 1</div>
+  <h2>主流 Benchmark 与它们的排名方式</h2>
+  <h3>先按"有没有标准答案"分成三类</h3>
+  <table>
+    <thead><tr><th style="width:22%">类别</th><th style="width:30%">代表榜单</th><th style="width:24%">怎么打分</th><th>排名方式</th></tr></thead>
+    <tbody>
+      <tr><td><b>客观能力类</b><br><span class="sub">静态题库</span></td><td>MMLU / MMLU-Pro、GPQA、GSM8K、MATH、HellaSwag、ARC、BBH</td><td>与标准答案比对，算 <b>accuracy</b></td><td>分数降序</td></tr>
+      <tr><td><b>代码 / 智能体类</b><br><span class="sub">要真的能跑</span></td><td>HumanEval(+)、MBPP、LiveCodeBench、SWE-bench、GAIA</td><td>跑单元测试 / 端到端验证，算 <b>pass@k、解决率</b></td><td>成功率降序</td></tr>
+      <tr><td><b>主观偏好类</b><br><span class="sub">没有标准答案</span></td><td>MT-Bench、AlpacaEval、LLM-as-judge、Chatbot Arena</td><td>人 / 强模型裁判，两两比较</td><td>胜率、平均分、<b>ELO</b></td></tr>
+    </tbody>
+  </table>
+  <div class="box warn">
+    <div class="bt">这三类有一个共同点</div>
+    最终都只输出"对错 / 偏好"这一类<b>粗糙信号</b>，几乎<b>没有一家报告"模型说 90% 时，是否真的有 90% 答对"</b>——这正是 Part 2 要处理的问题。
+  </div>
+</section>
+
+<section class="slide" data-part="Part 1 Benchmark">
+  <h2>1.1 客观能力类：知识、推理与中文</h2>
+  <table>
+    <thead><tr><th style="width:20%">Benchmark</th><th style="width:34%">测什么</th><th style="width:20%">怎么评</th><th>结果形态</th></tr></thead>
+    <tbody>
+      <tr><td><b>MMLU / MMLU-Pro</b></td><td>57+ 学科通识，多选题；Pro 版选项增至 10 个、更抗蒙</td><td>accuracy</td><td>知识正确率 %（前沿已 90%+，接近饱和）</td></tr>
+      <tr><td><b>GPQA-Diamond</b></td><td>博士级科学题，刻意设计成检索不到（Google-proof）</td><td>accuracy</td><td>非专家仅约 34%；顶尖模型较高</td></tr>
+      <tr><td><b>GSM8K / MATH</b></td><td>小学应用题 / 竞赛级数学</td><td>答案匹配</td><td>解题正确率 %</td></tr>
+      <tr><td><b>HellaSwag / ARC / BBH</b></td><td>常识补全 / 科学选择 / 多步推理子任务集</td><td>accuracy</td><td>推理正确率 %</td></tr>
+      <tr><td><b>C-Eval / CMMLU / SuperCLUE</b></td><td>中文综合知识与能力</td><td>accuracy</td><td>中文能力 %</td></tr>
+    </tbody>
+  </table>
+  <div class="box bad">
+    <div class="bt">三个结构性缺陷</div>
+    ① <b>饱和</b>：MMLU 上头部模型挤在 90% 附近，区分度消失；② <b>污染</b>：静态题库逐渐进入训练集，分数虚高；③ <b>无校准信息</b>：只报答对率，不报置信度的可信程度。
+  </div>
+</section>
+
+<section class="slide" data-part="Part 1 Benchmark">
+  <h2>1.2 代码 / 智能体类：从"会做题"到"能干活"</h2>
+  <div class="cols">
+    <div class="col card">
+      <div class="ct">HumanEval(+) / MBPP</div>
+      <p class="sub">给定函数签名写实现，跑单元测试。<code>pass@1</code> 是单次通过率，<code>pass@k</code> 是采样 k 次至少一次通过。<b>+</b> 版本补充大量隐藏测试，专门压"假通过"。</p>
+    </div>
+    <div class="col card">
+      <div class="ct">LiveCodeBench</div>
+      <p class="sub">题目按时间<b>滚动更新</b>，只评测模型训练截止之后的题，直接对抗训练集污染。</p>
+    </div>
+    <div class="col card">
+      <div class="ct">SWE-bench (Verified)</div>
+      <p class="sub">给一个真实 GitHub issue 与仓库，要求端到端修好 bug，用官方测试验证。指标是<b>解决率 %</b>，测的是"能不能干活"。</p>
+    </div>
+    <div class="col card">
+      <div class="ct">GAIA</div>
+      <p class="sub">真实世界多步任务（检索 + 推理 + 工具调用），按 L1–L3 难度分层报成功率。</p>
+    </div>
+  </div>
+  <h3>一个例外：HELM</h3>
+  <p>HELM 不追求合成一个总分，而是<b>分维度出报告</b>——准确率、校准（calibration）、鲁棒性、公平性、效率并列。它是极少数把"校准"列为正式评估维度的框架，这一点对 Part 2 很关键。</p>
+  <div class="box good">
+    <div class="bt">对 Part 3 的伏笔</div>
+    这类评测天然产出<b>多级信号</b>：测试通过 3/5 个用例、五步推理走对三步。二值化会把它压成 0/1，白白丢掉精度——这正是 GRM/GPCM 的用武之地。
+  </div>
+</section>
+
+<section class="slide" data-part="Part 1 Benchmark">
+  <h2>1.3 主观偏好类：没有标准答案时怎么排名</h2>
+  <table>
+    <thead><tr><th style="width:20%">Benchmark</th><th style="width:40%">机制</th><th>输出</th></tr></thead>
+    <tbody>
+      <tr><td><b>MT-Bench</b></td><td>80 组多轮对话，用强模型（如 GPT-4）当裁判，逐轮打 0–10 分</td><td>平均分</td></tr>
+      <tr><td><b>AlpacaEval</b></td><td>同一 prompt 下，模型输出 vs 参考模型输出，算胜率</td><td>win rate %</td></tr>
+      <tr><td><b>Chatbot Arena</b></td><td>真人匿名盲评：两个匿名模型同台 PK，用户选更好的，之后揭示身份</td><td><b>ELO + 置信区间</b></td></tr>
+    </tbody>
+  </table>
+  <h3>Arena 的排名机制值得单独说</h3>
+  <p>它用 <b>Bradley–Terry 模型</b>（象棋 ELO 的推广）从海量成对比较中估计每个模型的潜在强度 <span class="math" data-tex="\beta_i"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>β</mi><mi>i</mi></msub></mrow><annotation encoding="application/x-tex">\beta_i</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 0.8889em; vertical-align: -0.1944em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right: 0.0528em;">β</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3117em;"><span class="" style="top: -2.55em; margin-left: -0.0528em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.15em;"><span class=""></span></span></span></span></span></span></span></span></span></span>：</p>
+  <div class="math block" data-tex="P(i \succ j) \;=\; \frac{e^{\beta_i}}{e^{\beta_i}+e^{\beta_j}} \;=\; \sigma(\beta_i-\beta_j)"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi>P</mi><mo stretchy="false">(</mo><mi>i</mi><mo>≻</mo><mi>j</mi><mo stretchy="false">)</mo>  <mo>=</mo>  <mfrac><msup><mi>e</mi><msub><mi>β</mi><mi>i</mi></msub></msup><mrow><msup><mi>e</mi><msub><mi>β</mi><mi>i</mi></msub></msup><mo>+</mo><msup><mi>e</mi><msub><mi>β</mi><mi>j</mi></msub></msup></mrow></mfrac>  <mo>=</mo>  <mi>σ</mi><mo stretchy="false">(</mo><msub><mi>β</mi><mi>i</mi></msub><mo>−</mo><msub><mi>β</mi><mi>j</mi></msub><mo stretchy="false">)</mo></mrow><annotation encoding="application/x-tex">P(i \succ j) \;=\; \frac{e^{\beta_i}}{e^{\beta_i}+e^{\beta_j}} \;=\; \sigma(\beta_i-\beta_j)</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 1em; vertical-align: -0.25em;"></span><span class="mord mathnormal" style="margin-right: 0.1389em;">P</span><span class="mopen">(</span><span class="mord mathnormal">i</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">≻</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 1em; vertical-align: -0.25em;"></span><span class="mord mathnormal" style="margin-right: 0.0572em;">j</span><span class="mclose">)</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 2.2954em; vertical-align: -0.7693em;"></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 1.5261em;"><span class="" style="top: -2.314em;"><span class="pstrut" style="height: 3em;"></span><span class="mord"><span class="mord"><span class="mord mathnormal">e</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height: 0.7751em;"><span class="" style="top: -2.989em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0528em;">β</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3281em;"><span class="" style="top: -2.357em; margin-left: -0.0528em; margin-right: 0.0714em;"><span class="pstrut" style="height: 2.5em;"></span><span class="sizing reset-size3 size1 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.143em;"><span class=""></span></span></span></span></span></span></span></span></span></span></span></span></span></span><span class="mspace" style="margin-right: 0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right: 0.2222em;"></span><span class="mord"><span class="mord mathnormal">e</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height: 0.7912em;"><span class="" style="top: -3.0051em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0528em;">β</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3281em;"><span class="" style="top: -2.357em; margin-left: -0.0528em; margin-right: 0.0714em;"><span class="pstrut" style="height: 2.5em;"></span><span class="sizing reset-size3 size1 mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2819em;"><span class=""></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span><span class="" style="top: -3.23em;"><span class="pstrut" style="height: 3em;"></span><span class="frac-line" style="border-bottom-width: 0.04em;"></span></span><span class="" style="top: -3.677em;"><span class="pstrut" style="height: 3em;"></span><span class="mord"><span class="mord"><span class="mord mathnormal">e</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height: 0.8491em;"><span class="" style="top: -3.063em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0528em;">β</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3281em;"><span class="" style="top: -2.357em; margin-left: -0.0528em; margin-right: 0.0714em;"><span class="pstrut" style="height: 2.5em;"></span><span class="sizing reset-size3 size1 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.143em;"><span class=""></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.7693em;"><span class=""></span></span></span></span></span><span class="mclose nulldelimiter"></span></span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 1em; vertical-align: -0.25em;"></span><span class="mord mathnormal" style="margin-right: 0.0359em;">σ</span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal" style="margin-right: 0.0528em;">β</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3117em;"><span class="" style="top: -2.55em; margin-left: -0.0528em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.15em;"><span class=""></span></span></span></span></span></span><span class="mspace" style="margin-right: 0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right: 0.2222em;"></span></span><span class="base"><span class="strut" style="height: 1.0361em; vertical-align: -0.2861em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right: 0.0528em;">β</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3117em;"><span class="" style="top: -2.55em; margin-left: -0.0528em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2861em;"><span class=""></span></span></span></span></span></span><span class="mclose">)</span></span></span></span></span></div>
+  <ul>
+    <li><b>匿名</b>防品牌偏置；<b>主动采样</b>优先挑选"最不确定的一对"来比，提高信息效率；</li>
+    <li><b>给出置信区间</b>：对战场次少的模型区间宽，明确告诉你"这个排名还不确定"。</li>
+  </ul>
+  <div class="box warn">
+    <div class="bt">但它仍然没有校准维度</div>
+    Arena 回答的是"人更喜欢谁"，不是"模型自己认为对不对、以及这个判断值不值得信"。
+  </div>
+</section>
+
+<section class="slide" data-part="Part 1 Benchmark">
+  <h2>1.4 排名方式小结：从裸分到潜在能力</h2>
+  <table>
+    <thead><tr><th style="width:24%">方式</th><th style="width:32%">做法</th><th style="width:22%">优点</th><th>不足</th></tr></thead>
+    <tbody>
+      <tr><td><b>裸准确率</b></td><td>对题数 ÷ 总题数</td><td>简单可比</td><td>丢弃置信度；受题目难度分布影响大</td></tr>
+      <tr><td><b>pass@k</b></td><td>采样 k 次至少一次通过</td><td>适合代码等可验证场景</td><td>与 k 强相关，跨榜单不可比</td></tr>
+      <tr><td><b>胜率 / 平均分</b></td><td>裁判打分或直接比较</td><td>能覆盖开放生成</td><td>依赖裁判，存在位置与长度偏置</td></tr>
+      <tr><td><b>Bradley–Terry / ELO</b></td><td>成对比较估计潜在强度</td><td>抗题目偏差，能给区间</td><td>需要大量对局；仍无校准信息</td></tr>
+      <tr><td><b>IRT 能力估计</b></td><td>同时估模型能力 <span class="math" data-tex="\theta"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>θ</mi></mrow><annotation encoding="application/x-tex">\theta</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 0.6944em;"></span><span class="mord mathnormal" style="margin-right: 0.0278em;">θ</span></span></span></span></span> 与题目参数</td><td>带标准误；可做自适应选题</td><td>依赖模型假设与数据充足度（详见 Part 3）</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ============ Part 2 ============ -->
+<section class="slide" data-part="Part 2 自评置信度">
+  <div class="kicker">PART 2</div>
+  <h2>让模型自己给出置信度</h2>
+  <h3>2.1 什么是口头置信（verbalized confidence）</h3>
+  <p>在给出答案的同时，要求模型输出一个<b>数值或等级</b>来表达"我对这个答案有多大把握"，例如 <code>{"answer":"3","confidence":0.62}</code>。它不需要访问 logits，因此是<b>黑盒 API 唯一普适</b>的置信度通道。</p>
+  <h3>2.2 "置信度可信"在数学上是什么意思</h3>
+  <p>校准（calibration）的定义非常朴素——<b>当模型说 q 时，长期看确实有 q 的比例答对</b>：</p>
+  <div class="math block" data-tex="\mathbb{P}\big(y=1 \;\big|\; \hat{p}=q\big) \;=\; q, \qquad \forall q\in[0,1]"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi mathvariant="double-struck">P</mi><mo fence="false" stretchy="true" minsize="1.2em" maxsize="1.2em">(</mo><mi>y</mi><mo>=</mo><mn>1</mn>  <mo fence="false" stretchy="true" minsize="1.2em" maxsize="1.2em">∣</mo>  <mover accent="true"><mi>p</mi><mo>^</mo></mover><mo>=</mo><mi>q</mi><mo fence="false" stretchy="true" minsize="1.2em" maxsize="1.2em">)</mo>  <mo>=</mo>  <mi>q</mi><mo separator="true">,</mo><mspace width="2em"></mspace><mi mathvariant="normal">∀</mi><mi>q</mi><mo>∈</mo><mo stretchy="false">[</mo><mn>0</mn><mo separator="true">,</mo><mn>1</mn><mo stretchy="false">]</mo></mrow><annotation encoding="application/x-tex">\mathbb{P}\big(y=1 \;\big|\; \hat{p}=q\big) \;=\; q, \qquad \forall q\in[0,1]</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 1.2em; vertical-align: -0.35em;"></span><span class="mord mathbb">P</span><span class="mord"><span class="delimsizing size1">(</span></span><span class="mord mathnormal" style="margin-right: 0.0359em;">y</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 1.2em; vertical-align: -0.35em;"></span><span class="mord">1</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mord"><span class="delimsizing mult"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.85em;"><span class="" style="top: -2.85em;"><span class="pstrut" style="height: 3.2em;"></span><span class="" style="width: 0.333em; height: 1.2em;"><svg width="0.333em" height="1.200em" viewBox="0 0 333 1200"><path d="M145 15 v585 v0 v585 c2.667,10,9.667,15,21,15
+c10,0,16.667,-5,20,-15 v-585 v0 v-585 c-2.667,-10,-9.667,-15,-21,-15
+c-10,0,-16.667,5,-20,15z M188 15 H145 v585 v0 v585 h43z"></path></svg></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.35em;"><span class=""></span></span></span></span></span></span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mord accent"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.6944em;"><span class="" style="top: -3em;"><span class="pstrut" style="height: 3em;"></span><span class="mord mathnormal">p</span></span><span class="" style="top: -3em;"><span class="pstrut" style="height: 3em;"></span><span class="accent-body" style="left: -0.1667em;"><span class="mord">^</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.1944em;"><span class=""></span></span></span></span></span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 1.2em; vertical-align: -0.35em;"></span><span class="mord mathnormal" style="margin-right: 0.0359em;">q</span><span class="mord"><span class="delimsizing size1">)</span></span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 0.8889em; vertical-align: -0.1944em;"></span><span class="mord mathnormal" style="margin-right: 0.0359em;">q</span><span class="mpunct">,</span><span class="mspace" style="margin-right: 2em;"></span><span class="mspace" style="margin-right: 0.1667em;"></span><span class="mord">∀</span><span class="mord mathnormal" style="margin-right: 0.0359em;">q</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">∈</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 1em; vertical-align: -0.25em;"></span><span class="mopen">[</span><span class="mord">0</span><span class="mpunct">,</span><span class="mspace" style="margin-right: 0.1667em;"></span><span class="mord">1</span><span class="mclose">]</span></span></span></span></span></div>
+  <p>注意它和"判别力"是两件事。判别力关心<b>排序对不对</b>（给更可能的题更高分），校准关心<b>数值本身准不准</b>。一个模型可以排序很准但严重过度自信。</p>
+  <div class="box warn">
+    <div class="bt">先给结论</div>
+    口头置信用于<b>排序 / 判别</b>通常可靠；用于<b>当成真实概率</b>则普遍过度自信，必须先验证、必要时做事后校准（温度缩放 / Platt / 等渗回归）。
+  </div>
+</section>
+
+<section class="slide" data-part="Part 2 自评置信度">
+  <h2>2.3 关键论文：Lin et al. 2022《Teaching Models to Express Their Uncertainty in Words》</h2>
+  <p class="sub">arXiv:2205.14334 · GPT-3 davinci 175B · 自建数据集 CalibratedMath</p>
+  <h3>它比较的"三种概率"</h3>
+  <table>
+    <thead><tr><th style="width:22%">类型</th><th style="width:38%">怎么得到 P(答案正确)</th><th style="width:16%">是否需训练</th><th>特点</th></tr></thead>
+    <tbody>
+      <tr><td><b>Answer logit</b></td><td>模型自己答案 token 的归一化 logprob</td><td>不需要</td><td>只衡量某一个具体字符串；<b>一题多解时系统性低估</b></td></tr>
+      <tr><td><b>Indirect logit</b></td><td>答案后追加 <code>True/False:</code>，读 True 的 logprob，即 <span class="math" data-tex="P(\text{True}\mid Q,A)"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>P</mi><mo stretchy="false">(</mo><mtext>True</mtext><mo>∣</mo><mi>Q</mi><mo separator="true">,</mo><mi>A</mi><mo stretchy="false">)</mo></mrow><annotation encoding="application/x-tex">P(\text{True}\mid Q,A)</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 1em; vertical-align: -0.25em;"></span><span class="mord mathnormal" style="margin-right: 0.1389em;">P</span><span class="mopen">(</span><span class="mord text"><span class="mord">True</span></span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">∣</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 1em; vertical-align: -0.25em;"></span><span class="mord mathnormal">Q</span><span class="mpunct">,</span><span class="mspace" style="margin-right: 0.1667em;"></span><span class="mord mathnormal">A</span><span class="mclose">)</span></span></span></span></span></td><td>需微调</td><td>能给模型自己的开放答案打分</td></tr>
+      <tr><td><b>Verbalized</b></td><td>直接输出 "19%" 或等级词</td><td>需微调</td><td><b>有自然语言的表达力</b>，可表达连续分布</td></tr>
+    </tbody>
+  </table>
+  <div class="box">
+    <div class="bt">出发点：校准的是"模型自己的"不确定性</div>
+    GPT-3 在计算机安全问答上胜过多数人类，却在 <span class="math" data-tex="23\times 7"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>23</mn><mo>×</mo><mn>7</mn></mrow><annotation encoding="application/x-tex">23\times 7</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 0.7278em; vertical-align: -0.0833em;"></span><span class="mord">23</span><span class="mspace" style="margin-right: 0.2222em;"></span><span class="mbin">×</span><span class="mspace" style="margin-right: 0.2222em;"></span></span><span class="base"><span class="strut" style="height: 0.6444em;"></span><span class="mord">7</span></span></span></span></span> 这类算术上远不如人。所以<b>不能照抄人类的置信表达</b>。
+  </div>
+</section>
+
+
+
+
+
+
+
+<section class="slide" data-part="Part 2 自评置信度">
+  <h2>2.4 闭源模型下，具体怎么问</h2>
+  <div class="cols">
+    <div class="col">
+      <div class="card">
+        <div class="ct">方案 A：只要所选答案的置信度</div>
+        <pre>请回答问题，并说明你对该答案
+正确的把握程度。严格以 JSON 返回：
+{"answer": "...", "confidence": 0.xx}
+
+问题：&lt;问题&gt;　选项：&lt;选项&gt;</pre>
+      </div>
+    </div>
+    <div class="col">
+      <div class="card">
+        <div class="ct">方案 B：要整个选项分布（推荐）</div>
+        <pre>这是多选题。请给出每个选项为正确
+答案的概率，概率之和必须等于 1。
+严格以 JSON 返回：
+{"A":0.xx,"B":0.xx,"C":0.xx,"D":0.xx}
+
+问题：&lt;问题&gt;</pre>
+      </div>
+    </div>
+  </div>
+  <h3>三条纪律</h3>
+  <ol>
+    <li><b>要分布，不要单个把握</b>：拿到完整分布才能算 NLL / Brier / ECE；模型不提示时不会自动归一，必要时后处理归一。</li>
+    <li><b>答案与置信分离</b>：先独立作答再要置信度（或分字段给出），避免相互污染。</li>
+    <li><b>结构化输出</b>：强制 JSON，避免得到"看起来很像"但无法量化的文字。</li>
+  </ol>
+  <div class="box">
+    <div class="bt">优先级</div>
+    有 logprob → 用 logprob ＞ 口头置信 ≈ 采样一致性。采样一致性（温度 &gt; 0 采样 K 次，取最高频答案占比）不受"模型自我标高"影响，是很好的交叉验证信号。
+  </div>
+</section>
+
+
+
+<!-- ============ Part 3 ============ -->
+<section class="slide" data-part="Part 3 IRT 与 GRM/PCM">
+  <div class="kicker">PART 3</div>
+  <h2>IRT 评价被二值困住了吗？GRM / PCM 能补什么</h2>
+  <h3>3.1 先回顾：二值 IRT 在做什么</h3>
+  <p>项目反应理论把"模型答题"类比为"考生答卷"：同时估计<b>模型能力</b> <span class="math" data-tex="\theta_i"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>θ</mi><mi>i</mi></msub></mrow><annotation encoding="application/x-tex">\theta_i</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 0.8444em; vertical-align: -0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right: 0.0278em;">θ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3117em;"><span class="" style="top: -2.55em; margin-left: -0.0278em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.15em;"><span class=""></span></span></span></span></span></span></span></span></span></span> 与<b>题目参数</b>（难度 <span class="math" data-tex="b_j"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>b</mi><mi>j</mi></msub></mrow><annotation encoding="application/x-tex">b_j</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 0.9805em; vertical-align: -0.2861em;"></span><span class="mord"><span class="mord mathnormal">b</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3117em;"><span class="" style="top: -2.55em; margin-left: 0em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2861em;"><span class=""></span></span></span></span></span></span></span></span></span></span>、区分度 <span class="math" data-tex="a_j"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>a</mi><mi>j</mi></msub></mrow><annotation encoding="application/x-tex">a_j</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 0.7167em; vertical-align: -0.2861em;"></span><span class="mord"><span class="mord mathnormal">a</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3117em;"><span class="" style="top: -2.55em; margin-left: 0em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2861em;"><span class=""></span></span></span></span></span></span></span></span></span></span>、猜测 <span class="math" data-tex="c_j"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>c</mi><mi>j</mi></msub></mrow><annotation encoding="application/x-tex">c_j</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 0.7167em; vertical-align: -0.2861em;"></span><span class="mord"><span class="mord mathnormal">c</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3117em;"><span class="" style="top: -2.55em; margin-left: 0em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2861em;"><span class=""></span></span></span></span></span></span></span></span></span></span>），而不是简单数答对了几题。</p>
+  <div class="math block" data-tex="\text{1PL (Rasch):}\quad P(y_{ij}=1\mid\theta_i)=\frac{e^{\theta_i-b_j}}{1+e^{\theta_i-b_j}}"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mtext>1PL&nbsp;(Rasch):</mtext><mspace width="1em"></mspace><mi>P</mi><mo stretchy="false">(</mo><msub><mi>y</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>=</mo><mn>1</mn><mo>∣</mo><msub><mi>θ</mi><mi>i</mi></msub><mo stretchy="false">)</mo><mo>=</mo><mfrac><msup><mi>e</mi><mrow><msub><mi>θ</mi><mi>i</mi></msub><mo>−</mo><msub><mi>b</mi><mi>j</mi></msub></mrow></msup><mrow><mn>1</mn><mo>+</mo><msup><mi>e</mi><mrow><msub><mi>θ</mi><mi>i</mi></msub><mo>−</mo><msub><mi>b</mi><mi>j</mi></msub></mrow></msup></mrow></mfrac></mrow><annotation encoding="application/x-tex">\text{1PL (Rasch):}\quad P(y_{ij}=1\mid\theta_i)=\frac{e^{\theta_i-b_j}}{1+e^{\theta_i-b_j}}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 1.0361em; vertical-align: -0.2861em;"></span><span class="mord text"><span class="mord">1PL&nbsp;(Rasch):</span></span><span class="mspace" style="margin-right: 1em;"></span><span class="mord mathnormal" style="margin-right: 0.1389em;">P</span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal" style="margin-right: 0.0359em;">y</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3117em;"><span class="" style="top: -2.55em; margin-left: -0.0359em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">ij</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2861em;"><span class=""></span></span></span></span></span></span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 1em; vertical-align: -0.25em;"></span><span class="mord">1</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">∣</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 1em; vertical-align: -0.25em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right: 0.0278em;">θ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3117em;"><span class="" style="top: -2.55em; margin-left: -0.0278em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.15em;"><span class=""></span></span></span></span></span></span><span class="mclose">)</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 2.2954em; vertical-align: -0.7693em;"></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 1.5261em;"><span class="" style="top: -2.314em;"><span class="pstrut" style="height: 3em;"></span><span class="mord"><span class="mord">1</span><span class="mspace" style="margin-right: 0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right: 0.2222em;"></span><span class="mord"><span class="mord mathnormal">e</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height: 0.7912em;"><span class="" style="top: -3.0051em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0278em;">θ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3281em;"><span class="" style="top: -2.357em; margin-left: -0.0278em; margin-right: 0.0714em;"><span class="pstrut" style="height: 2.5em;"></span><span class="sizing reset-size3 size1 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.143em;"><span class=""></span></span></span></span></span></span><span class="mbin mtight">−</span><span class="mord mtight"><span class="mord mathnormal mtight">b</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3281em;"><span class="" style="top: -2.357em; margin-left: 0em; margin-right: 0.0714em;"><span class="pstrut" style="height: 2.5em;"></span><span class="sizing reset-size3 size1 mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2819em;"><span class=""></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span><span class="" style="top: -3.23em;"><span class="pstrut" style="height: 3em;"></span><span class="frac-line" style="border-bottom-width: 0.04em;"></span></span><span class="" style="top: -3.677em;"><span class="pstrut" style="height: 3em;"></span><span class="mord"><span class="mord"><span class="mord mathnormal">e</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height: 0.8491em;"><span class="" style="top: -3.063em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0278em;">θ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3281em;"><span class="" style="top: -2.357em; margin-left: -0.0278em; margin-right: 0.0714em;"><span class="pstrut" style="height: 2.5em;"></span><span class="sizing reset-size3 size1 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.143em;"><span class=""></span></span></span></span></span></span><span class="mbin mtight">−</span><span class="mord mtight"><span class="mord mathnormal mtight">b</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3281em;"><span class="" style="top: -2.357em; margin-left: 0em; margin-right: 0.0714em;"><span class="pstrut" style="height: 2.5em;"></span><span class="sizing reset-size3 size1 mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2819em;"><span class=""></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.7693em;"><span class=""></span></span></span></span></span><span class="mclose nulldelimiter"></span></span></span></span></span></span></div>
+  <div class="math block" data-tex="\text{2PL:}\quad P(y_{ij}=1\mid\theta_i)=\frac{1}{1+e^{-a_j(\theta_i-b_j)}}"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mtext>2PL:</mtext><mspace width="1em"></mspace><mi>P</mi><mo stretchy="false">(</mo><msub><mi>y</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>=</mo><mn>1</mn><mo>∣</mo><msub><mi>θ</mi><mi>i</mi></msub><mo stretchy="false">)</mo><mo>=</mo><mfrac><mn>1</mn><mrow><mn>1</mn><mo>+</mo><msup><mi>e</mi><mrow><mo>−</mo><msub><mi>a</mi><mi>j</mi></msub><mo stretchy="false">(</mo><msub><mi>θ</mi><mi>i</mi></msub><mo>−</mo><msub><mi>b</mi><mi>j</mi></msub><mo stretchy="false">)</mo></mrow></msup></mrow></mfrac></mrow><annotation encoding="application/x-tex">\text{2PL:}\quad P(y_{ij}=1\mid\theta_i)=\frac{1}{1+e^{-a_j(\theta_i-b_j)}}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 1.0361em; vertical-align: -0.2861em;"></span><span class="mord text"><span class="mord">2PL:</span></span><span class="mspace" style="margin-right: 1em;"></span><span class="mord mathnormal" style="margin-right: 0.1389em;">P</span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal" style="margin-right: 0.0359em;">y</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3117em;"><span class="" style="top: -2.55em; margin-left: -0.0359em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">ij</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2861em;"><span class=""></span></span></span></span></span></span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 1em; vertical-align: -0.25em;"></span><span class="mord">1</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">∣</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 1em; vertical-align: -0.25em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right: 0.0278em;">θ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3117em;"><span class="" style="top: -2.55em; margin-left: -0.0278em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.15em;"><span class=""></span></span></span></span></span></span><span class="mclose">)</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 2.1248em; vertical-align: -0.8034em;"></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 1.3214em;"><span class="" style="top: -2.2799em;"><span class="pstrut" style="height: 3em;"></span><span class="mord"><span class="mord">1</span><span class="mspace" style="margin-right: 0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right: 0.2222em;"></span><span class="mord"><span class="mord mathnormal">e</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height: 0.8301em;"><span class="" style="top: -3.0051em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight">−</span><span class="mord mtight"><span class="mord mathnormal mtight">a</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3281em;"><span class="" style="top: -2.357em; margin-left: 0em; margin-right: 0.0714em;"><span class="pstrut" style="height: 2.5em;"></span><span class="sizing reset-size3 size1 mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2819em;"><span class=""></span></span></span></span></span></span><span class="mopen mtight">(</span><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0278em;">θ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3281em;"><span class="" style="top: -2.357em; margin-left: -0.0278em; margin-right: 0.0714em;"><span class="pstrut" style="height: 2.5em;"></span><span class="sizing reset-size3 size1 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.143em;"><span class=""></span></span></span></span></span></span><span class="mbin mtight">−</span><span class="mord mtight"><span class="mord mathnormal mtight">b</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3281em;"><span class="" style="top: -2.357em; margin-left: 0em; margin-right: 0.0714em;"><span class="pstrut" style="height: 2.5em;"></span><span class="sizing reset-size3 size1 mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2819em;"><span class=""></span></span></span></span></span></span><span class="mclose mtight">)</span></span></span></span></span></span></span></span></span></span></span><span class="" style="top: -3.23em;"><span class="pstrut" style="height: 3em;"></span><span class="frac-line" style="border-bottom-width: 0.04em;"></span></span><span class="" style="top: -3.677em;"><span class="pstrut" style="height: 3em;"></span><span class="mord"><span class="mord">1</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.8034em;"><span class=""></span></span></span></span></span><span class="mclose nulldelimiter"></span></span></span></span></span></span></div>
+  <div class="math block" data-tex="\text{3PL:}\quad P(y_{ij}=1\mid\theta_i)=c_j+(1-c_j)\frac{1}{1+e^{-a_j(\theta_i-b_j)}}"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mtext>3PL:</mtext><mspace width="1em"></mspace><mi>P</mi><mo stretchy="false">(</mo><msub><mi>y</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>=</mo><mn>1</mn><mo>∣</mo><msub><mi>θ</mi><mi>i</mi></msub><mo stretchy="false">)</mo><mo>=</mo><msub><mi>c</mi><mi>j</mi></msub><mo>+</mo><mo stretchy="false">(</mo><mn>1</mn><mo>−</mo><msub><mi>c</mi><mi>j</mi></msub><mo stretchy="false">)</mo><mfrac><mn>1</mn><mrow><mn>1</mn><mo>+</mo><msup><mi>e</mi><mrow><mo>−</mo><msub><mi>a</mi><mi>j</mi></msub><mo stretchy="false">(</mo><msub><mi>θ</mi><mi>i</mi></msub><mo>−</mo><msub><mi>b</mi><mi>j</mi></msub><mo stretchy="false">)</mo></mrow></msup></mrow></mfrac></mrow><annotation encoding="application/x-tex">\text{3PL:}\quad P(y_{ij}=1\mid\theta_i)=c_j+(1-c_j)\frac{1}{1+e^{-a_j(\theta_i-b_j)}}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 1.0361em; vertical-align: -0.2861em;"></span><span class="mord text"><span class="mord">3PL:</span></span><span class="mspace" style="margin-right: 1em;"></span><span class="mord mathnormal" style="margin-right: 0.1389em;">P</span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal" style="margin-right: 0.0359em;">y</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3117em;"><span class="" style="top: -2.55em; margin-left: -0.0359em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">ij</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2861em;"><span class=""></span></span></span></span></span></span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 1em; vertical-align: -0.25em;"></span><span class="mord">1</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">∣</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 1em; vertical-align: -0.25em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right: 0.0278em;">θ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3117em;"><span class="" style="top: -2.55em; margin-left: -0.0278em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.15em;"><span class=""></span></span></span></span></span></span><span class="mclose">)</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 0.8694em; vertical-align: -0.2861em;"></span><span class="mord"><span class="mord mathnormal">c</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3117em;"><span class="" style="top: -2.55em; margin-left: 0em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2861em;"><span class=""></span></span></span></span></span></span><span class="mspace" style="margin-right: 0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right: 0.2222em;"></span></span><span class="base"><span class="strut" style="height: 1em; vertical-align: -0.25em;"></span><span class="mopen">(</span><span class="mord">1</span><span class="mspace" style="margin-right: 0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right: 0.2222em;"></span></span><span class="base"><span class="strut" style="height: 2.1248em; vertical-align: -0.8034em;"></span><span class="mord"><span class="mord mathnormal">c</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3117em;"><span class="" style="top: -2.55em; margin-left: 0em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2861em;"><span class=""></span></span></span></span></span></span><span class="mclose">)</span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 1.3214em;"><span class="" style="top: -2.2799em;"><span class="pstrut" style="height: 3em;"></span><span class="mord"><span class="mord">1</span><span class="mspace" style="margin-right: 0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right: 0.2222em;"></span><span class="mord"><span class="mord mathnormal">e</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height: 0.8301em;"><span class="" style="top: -3.0051em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight">−</span><span class="mord mtight"><span class="mord mathnormal mtight">a</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3281em;"><span class="" style="top: -2.357em; margin-left: 0em; margin-right: 0.0714em;"><span class="pstrut" style="height: 2.5em;"></span><span class="sizing reset-size3 size1 mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2819em;"><span class=""></span></span></span></span></span></span><span class="mopen mtight">(</span><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0278em;">θ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3281em;"><span class="" style="top: -2.357em; margin-left: -0.0278em; margin-right: 0.0714em;"><span class="pstrut" style="height: 2.5em;"></span><span class="sizing reset-size3 size1 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.143em;"><span class=""></span></span></span></span></span></span><span class="mbin mtight">−</span><span class="mord mtight"><span class="mord mathnormal mtight">b</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3281em;"><span class="" style="top: -2.357em; margin-left: 0em; margin-right: 0.0714em;"><span class="pstrut" style="height: 2.5em;"></span><span class="sizing reset-size3 size1 mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2819em;"><span class=""></span></span></span></span></span></span><span class="mclose mtight">)</span></span></span></span></span></span></span></span></span></span></span><span class="" style="top: -3.23em;"><span class="pstrut" style="height: 3em;"></span><span class="frac-line" style="border-bottom-width: 0.04em;"></span></span><span class="" style="top: -3.677em;"><span class="pstrut" style="height: 3em;"></span><span class="mord"><span class="mord">1</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.8034em;"><span class=""></span></span></span></span></span><span class="mclose nulldelimiter"></span></span></span></span></span></span></div>
+  <p><b>3PL 的 <span class="math" data-tex="c_j"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>c</mi><mi>j</mi></msub></mrow><annotation encoding="application/x-tex">c_j</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 0.7167em; vertical-align: -0.2861em;"></span><span class="mord"><span class="mord mathnormal">c</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3117em;"><span class="" style="top: -2.55em; margin-left: 0em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2861em;"><span class=""></span></span></span></span></span></span></span></span></span></span> 正是为多选题的"蒙对"设计的</b>——这是二值框架内处理猜测的标准做法。</p>
+</section>
+
+
+
+<section class="slide" data-part="Part 3 IRT 与 GRM/PCM">
+  <h2>3.3 二值化到底丢了什么</h2>
+  <table>
+    <thead><tr><th style="width:28%">场景</th><th style="width:36%">实际存在的多级信息</th><th>二值化后的损失</th></tr></thead>
+    <tbody>
+      <tr><td>数学 / 推理</td><td>五步推导走对三步；中间步骤部分正确</td><td>"差一点做对"与"完全不会"被判为同一类</td></tr>
+      <tr><td>代码生成</td><td>5 个单元测试过了 3 个</td><td>丢失通过比例，能力估计方差变大</td></tr>
+      <tr><td>开放问答 / rubric</td><td>评分细则里命中 2/4 条</td><td>只保留"全命中"才算对</td></tr>
+      <tr><td>多选题</td><td>干扰项质量不同（选了"接近正确"的 vs 选了显然荒谬的）</td><td>所有错误选项等权</td></tr>
+      <tr><td>模型自评置信度</td><td>模型给出的 0.62</td><td>argmax 之后只剩 0/1</td></tr>
+    </tbody>
+  </table>
+  <div class="box bad">
+    <div class="bt">后果</div>
+    信息量下降 → 能力估计的<b>标准误变大</b> → 榜单上"谁更强"的判定更依赖题量；同时头部模型在简单题上全部答对，产生<b>天花板效应</b>，区分度归零。
+  </div>
+</section>
+
+<section class="slide" data-part="Part 3 IRT 与 GRM/PCM">
+  <h2>3.4 GRM：Samejima 等级反应模型</h2>
+  <p>把作答结果从 <span class="math" data-tex"="">\{0,1\}</span> 扩展到<b>有序类别</b> <span class="math" data-tex="k=0,1,\dots,m_j"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>k</mi><mo>=</mo><mn>0</mn><mo separator="true">,</mo><mn>1</mn><mo separator="true">,</mo><mo>…</mo><mo separator="true">,</mo><msub><mi>m</mi><mi>j</mi></msub></mrow><annotation encoding="application/x-tex">k=0,1,\dots,m_j</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 0.6944em;"></span><span class="mord mathnormal" style="margin-right: 0.0315em;">k</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 0.9305em; vertical-align: -0.2861em;"></span><span class="mord">0</span><span class="mpunct">,</span><span class="mspace" style="margin-right: 0.1667em;"></span><span class="mord">1</span><span class="mpunct">,</span><span class="mspace" style="margin-right: 0.1667em;"></span><span class="minner">…</span><span class="mspace" style="margin-right: 0.1667em;"></span><span class="mpunct">,</span><span class="mspace" style="margin-right: 0.1667em;"></span><span class="mord"><span class="mord mathnormal">m</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3117em;"><span class="" style="top: -2.55em; margin-left: 0em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2861em;"><span class=""></span></span></span></span></span></span></span></span></span></span>（如 0=完全错、1=部分对、2=基本对、3=完全对）。核心技巧是对<b>累积概率</b>建模：</p>
+  <div class="math block" data-tex="P^{*}_{jk}(\theta)\;=\;P(X\ge k\mid\theta)\;=\;\frac{1}{1+e^{-a_j(\theta-b_{jk})}},\qquad k=1,\dots,m_j"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msubsup><mi>P</mi><mrow><mi>j</mi><mi>k</mi></mrow><mo lspace="0em" rspace="0em">∗</mo></msubsup><mo stretchy="false">(</mo><mi>θ</mi><mo stretchy="false">)</mo>  <mo>=</mo>  <mi>P</mi><mo stretchy="false">(</mo><mi>X</mi><mo>≥</mo><mi>k</mi><mo>∣</mo><mi>θ</mi><mo stretchy="false">)</mo>  <mo>=</mo>  <mfrac><mn>1</mn><mrow><mn>1</mn><mo>+</mo><msup><mi>e</mi><mrow><mo>−</mo><msub><mi>a</mi><mi>j</mi></msub><mo stretchy="false">(</mo><mi>θ</mi><mo>−</mo><msub><mi>b</mi><mrow><mi>j</mi><mi>k</mi></mrow></msub><mo stretchy="false">)</mo></mrow></msup></mrow></mfrac><mo separator="true">,</mo><mspace width="2em"></mspace><mi>k</mi><mo>=</mo><mn>1</mn><mo separator="true">,</mo><mo>…</mo><mo separator="true">,</mo><msub><mi>m</mi><mi>j</mi></msub></mrow><annotation encoding="application/x-tex">P^{*}_{jk}(\theta)\;=\;P(X\ge k\mid\theta)\;=\;\frac{1}{1+e^{-a_j(\theta-b_{jk})}},\qquad k=1,\dots,m_j</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 1.1331em; vertical-align: -0.3831em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right: 0.1389em;">P</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.7387em;"><span class="" style="top: -2.453em; margin-left: -0.1389em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0315em;">jk</span></span></span></span><span class="" style="top: -3.113em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight">∗</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.3831em;"><span class=""></span></span></span></span></span></span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right: 0.0278em;">θ</span><span class="mclose">)</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 1em; vertical-align: -0.25em;"></span><span class="mord mathnormal" style="margin-right: 0.1389em;">P</span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right: 0.0785em;">X</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">≥</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 1em; vertical-align: -0.25em;"></span><span class="mord mathnormal" style="margin-right: 0.0315em;">k</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">∣</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 1em; vertical-align: -0.25em;"></span><span class="mord mathnormal" style="margin-right: 0.0278em;">θ</span><span class="mclose">)</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 2.1306em; vertical-align: -0.8092em;"></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 1.3214em;"><span class="" style="top: -2.2742em;"><span class="pstrut" style="height: 3em;"></span><span class="mord"><span class="mord">1</span><span class="mspace" style="margin-right: 0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right: 0.2222em;"></span><span class="mord"><span class="mord mathnormal">e</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height: 0.8358em;"><span class="" style="top: -3.0108em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight">−</span><span class="mord mtight"><span class="mord mathnormal mtight">a</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3281em;"><span class="" style="top: -2.357em; margin-left: 0em; margin-right: 0.0714em;"><span class="pstrut" style="height: 2.5em;"></span><span class="sizing reset-size3 size1 mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2819em;"><span class=""></span></span></span></span></span></span><span class="mopen mtight">(</span><span class="mord mathnormal mtight" style="margin-right: 0.0278em;">θ</span><span class="mbin mtight">−</span><span class="mord mtight"><span class="mord mathnormal mtight">b</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3448em;"><span class="" style="top: -2.3488em; margin-left: 0em; margin-right: 0.0714em;"><span class="pstrut" style="height: 2.5em;"></span><span class="sizing reset-size3 size1 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0315em;">jk</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2901em;"><span class=""></span></span></span></span></span></span><span class="mclose mtight">)</span></span></span></span></span></span></span></span></span></span></span><span class="" style="top: -3.23em;"><span class="pstrut" style="height: 3em;"></span><span class="frac-line" style="border-bottom-width: 0.04em;"></span></span><span class="" style="top: -3.677em;"><span class="pstrut" style="height: 3em;"></span><span class="mord"><span class="mord">1</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.8092em;"><span class=""></span></span></span></span></span><span class="mclose nulldelimiter"></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right: 2em;"></span><span class="mspace" style="margin-right: 0.1667em;"></span><span class="mord mathnormal" style="margin-right: 0.0315em;">k</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 0.9305em; vertical-align: -0.2861em;"></span><span class="mord">1</span><span class="mpunct">,</span><span class="mspace" style="margin-right: 0.1667em;"></span><span class="minner">…</span><span class="mspace" style="margin-right: 0.1667em;"></span><span class="mpunct">,</span><span class="mspace" style="margin-right: 0.1667em;"></span><span class="mord"><span class="mord mathnormal">m</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3117em;"><span class="" style="top: -2.55em; margin-left: 0em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2861em;"><span class=""></span></span></span></span></span></span></span></span></span></span></div>
+  <div class="math block" data-tex="P(X=k\mid\theta)\;=\;P^{*}_{jk}(\theta)\;-\;P^{*}_{j,k+1}(\theta),\qquad P^{*}_{j0}=1,\ \ P^{*}_{j,m_j+1}=0"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi>P</mi><mo stretchy="false">(</mo><mi>X</mi><mo>=</mo><mi>k</mi><mo>∣</mo><mi>θ</mi><mo stretchy="false">)</mo>  <mo>=</mo>  <msubsup><mi>P</mi><mrow><mi>j</mi><mi>k</mi></mrow><mo lspace="0em" rspace="0em">∗</mo></msubsup><mo stretchy="false">(</mo><mi>θ</mi><mo stretchy="false">)</mo>  <mo>−</mo>  <msubsup><mi>P</mi><mrow><mi>j</mi><mo separator="true">,</mo><mi>k</mi><mo>+</mo><mn>1</mn></mrow><mo lspace="0em" rspace="0em">∗</mo></msubsup><mo stretchy="false">(</mo><mi>θ</mi><mo stretchy="false">)</mo><mo separator="true">,</mo><mspace width="2em"></mspace><msubsup><mi>P</mi><mrow><mi>j</mi><mn>0</mn></mrow><mo lspace="0em" rspace="0em">∗</mo></msubsup><mo>=</mo><mn>1</mn><mo separator="true">,</mo><mtext>&nbsp;&nbsp;</mtext><msubsup><mi>P</mi><mrow><mi>j</mi><mo separator="true">,</mo><msub><mi>m</mi><mi>j</mi></msub><mo>+</mo><mn>1</mn></mrow><mo lspace="0em" rspace="0em">∗</mo></msubsup><mo>=</mo><mn>0</mn></mrow><annotation encoding="application/x-tex">P(X=k\mid\theta)\;=\;P^{*}_{jk}(\theta)\;-\;P^{*}_{j,k+1}(\theta),\qquad P^{*}_{j0}=1,\ \ P^{*}_{j,m_j+1}=0</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 1em; vertical-align: -0.25em;"></span><span class="mord mathnormal" style="margin-right: 0.1389em;">P</span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right: 0.0785em;">X</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 1em; vertical-align: -0.25em;"></span><span class="mord mathnormal" style="margin-right: 0.0315em;">k</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">∣</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 1em; vertical-align: -0.25em;"></span><span class="mord mathnormal" style="margin-right: 0.0278em;">θ</span><span class="mclose">)</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 1.1331em; vertical-align: -0.3831em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right: 0.1389em;">P</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.7387em;"><span class="" style="top: -2.453em; margin-left: -0.1389em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0315em;">jk</span></span></span></span><span class="" style="top: -3.113em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight">∗</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.3831em;"><span class=""></span></span></span></span></span></span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right: 0.0278em;">θ</span><span class="mclose">)</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mspace" style="margin-right: 0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mspace" style="margin-right: 0.2222em;"></span></span><span class="base"><span class="strut" style="height: 1.1331em; vertical-align: -0.3831em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right: 0.1389em;">P</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.7387em;"><span class="" style="top: -2.453em; margin-left: -0.1389em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span><span class="mpunct mtight">,</span><span class="mord mathnormal mtight" style="margin-right: 0.0315em;">k</span><span class="mbin mtight">+</span><span class="mord mtight">1</span></span></span></span><span class="" style="top: -3.113em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight">∗</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.3831em;"><span class=""></span></span></span></span></span></span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right: 0.0278em;">θ</span><span class="mclose">)</span><span class="mpunct">,</span><span class="mspace" style="margin-right: 2em;"></span><span class="mspace" style="margin-right: 0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right: 0.1389em;">P</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.7387em;"><span class="" style="top: -2.453em; margin-left: -0.1389em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span><span class="mord mtight">0</span></span></span></span><span class="" style="top: -3.113em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight">∗</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.3831em;"><span class=""></span></span></span></span></span></span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 1.183em; vertical-align: -0.4443em;"></span><span class="mord">1</span><span class="mpunct">,</span><span class="mspace">&nbsp;</span><span class="mspace">&nbsp;</span><span class="mspace" style="margin-right: 0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right: 0.1389em;">P</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.7387em;"><span class="" style="top: -2.453em; margin-left: -0.1389em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span><span class="mpunct mtight">,</span><span class="mord mtight"><span class="mord mathnormal mtight">m</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3281em;"><span class="" style="top: -2.357em; margin-left: 0em; margin-right: 0.0714em;"><span class="pstrut" style="height: 2.5em;"></span><span class="sizing reset-size3 size1 mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2819em;"><span class=""></span></span></span></span></span></span><span class="mbin mtight">+</span><span class="mord mtight">1</span></span></span></span><span class="" style="top: -3.113em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight">∗</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.4443em;"><span class=""></span></span></span></span></span></span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 0.6444em;"></span><span class="mord">0</span></span></span></span></span></div>
+  <ul>
+    <li><b><span class="math" data-tex="b_{jk}"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>b</mi><mrow><mi>j</mi><mi>k</mi></mrow></msub></mrow><annotation encoding="application/x-tex">b_{jk}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 0.9805em; vertical-align: -0.2861em;"></span><span class="mord"><span class="mord mathnormal">b</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3361em;"><span class="" style="top: -2.55em; margin-left: 0em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0315em;">jk</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2861em;"><span class=""></span></span></span></span></span></span></span></span></span></span> 是"类别阈值"</b>：跨过第 k 个台阶所需的能力水平，通常要求 <span class="math" data-tex="b_{j1}&lt;b_{j2}&lt;\dots&lt;b_{jm_j}"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>b</mi><mrow><mi>j</mi><mn>1</mn></mrow></msub><mo>&lt;</mo><msub><mi>b</mi><mrow><mi>j</mi><mn>2</mn></mrow></msub><mo>&lt;</mo><mo>⋯</mo><mo>&lt;</mo><msub><mi>b</mi><mrow><mi>j</mi><msub><mi>m</mi><mi>j</mi></msub></mrow></msub></mrow><annotation encoding="application/x-tex">b_{j1}&lt;b_{j2}&lt;\dots&lt;b_{jm_j}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 0.9805em; vertical-align: -0.2861em;"></span><span class="mord"><span class="mord mathnormal">b</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3117em;"><span class="" style="top: -2.55em; margin-left: 0em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span><span class="mord mtight">1</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2861em;"><span class=""></span></span></span></span></span></span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">&lt;</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 0.9805em; vertical-align: -0.2861em;"></span><span class="mord"><span class="mord mathnormal">b</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3117em;"><span class="" style="top: -2.55em; margin-left: 0em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span><span class="mord mtight">2</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2861em;"><span class=""></span></span></span></span></span></span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">&lt;</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 0.5782em; vertical-align: -0.0391em;"></span><span class="minner">⋯</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">&lt;</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 1.0418em; vertical-align: -0.3473em;"></span><span class="mord"><span class="mord mathnormal">b</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3117em;"><span class="" style="top: -2.55em; margin-left: 0em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span><span class="mord mtight"><span class="mord mathnormal mtight">m</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3281em;"><span class="" style="top: -2.357em; margin-left: 0em; margin-right: 0.0714em;"><span class="pstrut" style="height: 2.5em;"></span><span class="sizing reset-size3 size1 mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2819em;"><span class=""></span></span></span></span></span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.3473em;"><span class=""></span></span></span></span></span></span></span></span></span></span>；</li>
+    <li><b><span class="math" data-tex="a_j"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>a</mi><mi>j</mi></msub></mrow><annotation encoding="application/x-tex">a_j</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 0.7167em; vertical-align: -0.2861em;"></span><span class="mord"><span class="mord mathnormal">a</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3117em;"><span class="" style="top: -2.55em; margin-left: 0em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2861em;"><span class=""></span></span></span></span></span></span></span></span></span></span> 仍是区分度</b>：整道题共用一个斜率；</li>
+    <li>直观理解：把一道题变成<b>一叠递进的台阶</b>，能力越高，越可能站上更高的台阶。</li>
+  </ul>
+  <div class="box">
+    <div class="bt">这一步就是你说的"阶梯"</div>
+    GRM 正是把 0/1 的"一级台阶"换成 <span class="math" data-tex="m_j"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>m</mi><mi>j</mi></msub></mrow><annotation encoding="application/x-tex">m_j</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 0.7167em; vertical-align: -0.2861em;"></span><span class="mord"><span class="mord mathnormal">m</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3117em;"><span class="" style="top: -2.55em; margin-left: 0em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2861em;"><span class=""></span></span></span></span></span></span></span></span></span></span> 级台阶，用阈值参数刻画每一级。
+  </div>
+</section>
+
+<section class="slide" data-part="Part 3 IRT 与 GRM/PCM">
+  <h2>3.5 PCM 与 GPCM：分部评分模型</h2>
+  <h3>PCM（Masters，Rasch 系，无区分度参数）</h3>
+  <div class="math block" data-tex="P(X=k\mid\theta)\;=\;\frac{\exp\!\big[\sum_{h=0}^{k}(\theta-\delta_{jh})\big]}{\sum_{r=0}^{m_j}\exp\!\big[\sum_{h=0}^{r}(\theta-\delta_{jh})\big]}"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi>P</mi><mo stretchy="false">(</mo><mi>X</mi><mo>=</mo><mi>k</mi><mo>∣</mo><mi>θ</mi><mo stretchy="false">)</mo>  <mo>=</mo>  <mfrac><mrow><mi>exp</mi><mo>⁡</mo> ⁣<mo fence="false" stretchy="true" minsize="1.2em" maxsize="1.2em">[</mo><munderover><mo>∑</mo><mrow><mi>h</mi><mo>=</mo><mn>0</mn></mrow><mi>k</mi></munderover><mo stretchy="false">(</mo><mi>θ</mi><mo>−</mo><msub><mi>δ</mi><mrow><mi>j</mi><mi>h</mi></mrow></msub><mo stretchy="false">)</mo><mo fence="false" stretchy="true" minsize="1.2em" maxsize="1.2em">]</mo></mrow><mrow><munderover><mo>∑</mo><mrow><mi>r</mi><mo>=</mo><mn>0</mn></mrow><msub><mi>m</mi><mi>j</mi></msub></munderover><mi>exp</mi><mo>⁡</mo> ⁣<mo fence="false" stretchy="true" minsize="1.2em" maxsize="1.2em">[</mo><munderover><mo>∑</mo><mrow><mi>h</mi><mo>=</mo><mn>0</mn></mrow><mi>r</mi></munderover><mo stretchy="false">(</mo><mi>θ</mi><mo>−</mo><msub><mi>δ</mi><mrow><mi>j</mi><mi>h</mi></mrow></msub><mo stretchy="false">)</mo><mo fence="false" stretchy="true" minsize="1.2em" maxsize="1.2em">]</mo></mrow></mfrac></mrow><annotation encoding="application/x-tex">P(X=k\mid\theta)\;=\;\frac{\exp\!\big[\sum_{h=0}^{k}(\theta-\delta_{jh})\big]}{\sum_{r=0}^{m_j}\exp\!\big[\sum_{h=0}^{r}(\theta-\delta_{jh})\big]}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 1em; vertical-align: -0.25em;"></span><span class="mord mathnormal" style="margin-right: 0.1389em;">P</span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right: 0.0785em;">X</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 1em; vertical-align: -0.25em;"></span><span class="mord mathnormal" style="margin-right: 0.0315em;">k</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">∣</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 1em; vertical-align: -0.25em;"></span><span class="mord mathnormal" style="margin-right: 0.0278em;">θ</span><span class="mclose">)</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 2.819em; vertical-align: -1.09em;"></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 1.729em;"><span class="" style="top: -2.26em;"><span class="pstrut" style="height: 3em;"></span><span class="mord"><span class="mop"><span class="mop op-symbol small-op" style="position: relative; top: 0em;">∑</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.8435em;"><span class="" style="top: -2.4337em; margin-left: 0em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0278em;">r</span><span class="mrel mtight">=</span><span class="mord mtight">0</span></span></span></span><span class="" style="top: -3.2421em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathnormal mtight">m</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3281em;"><span class="" style="top: -2.357em; margin-left: 0em; margin-right: 0.0714em;"><span class="pstrut" style="height: 2.5em;"></span><span class="sizing reset-size3 size1 mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2819em;"><span class=""></span></span></span></span></span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2663em;"><span class=""></span></span></span></span></span></span><span class="mspace" style="margin-right: 0.1667em;"></span><span class="mop">exp</span><span class="mspace" style="margin-right: -0.1667em;"></span><span class="mspace" style="margin-right: 0.1667em;"></span><span class="mord"><span class="delimsizing size1">[</span></span><span class="mspace" style="margin-right: 0.1667em;"></span><span class="mop"><span class="mop op-symbol small-op" style="position: relative; top: 0em;">∑</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.8043em;"><span class="" style="top: -2.4003em; margin-left: 0em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">h</span><span class="mrel mtight">=</span><span class="mord mtight">0</span></span></span></span><span class="" style="top: -3.2029em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0278em;">r</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2997em;"><span class=""></span></span></span></span></span></span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right: 0.0278em;">θ</span><span class="mspace" style="margin-right: 0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right: 0.2222em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right: 0.0379em;">δ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3361em;"><span class="" style="top: -2.55em; margin-left: -0.0379em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">jh</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2861em;"><span class=""></span></span></span></span></span></span><span class="mclose">)</span><span class="mord"><span class="delimsizing size1">]</span></span></span></span><span class="" style="top: -3.23em;"><span class="pstrut" style="height: 3em;"></span><span class="frac-line" style="border-bottom-width: 0.04em;"></span></span><span class="" style="top: -3.74em;"><span class="pstrut" style="height: 3em;"></span><span class="mord"><span class="mop">exp</span><span class="mspace" style="margin-right: -0.1667em;"></span><span class="mspace" style="margin-right: 0.1667em;"></span><span class="mord"><span class="delimsizing size1">[</span></span><span class="mspace" style="margin-right: 0.1667em;"></span><span class="mop"><span class="mop op-symbol small-op" style="position: relative; top: 0em;">∑</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.989em;"><span class="" style="top: -2.4003em; margin-left: 0em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">h</span><span class="mrel mtight">=</span><span class="mord mtight">0</span></span></span></span><span class="" style="top: -3.2029em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0315em;">k</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2997em;"><span class=""></span></span></span></span></span></span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right: 0.0278em;">θ</span><span class="mspace" style="margin-right: 0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right: 0.2222em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right: 0.0379em;">δ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3361em;"><span class="" style="top: -2.55em; margin-left: -0.0379em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">jh</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2861em;"><span class=""></span></span></span></span></span></span><span class="mclose">)</span><span class="mord"><span class="delimsizing size1">]</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 1.09em;"><span class=""></span></span></span></span></span><span class="mclose nulldelimiter"></span></span></span></span></span></span></div>
+  <h3>GPCM（Muraki 广义分部评分，带区分度）</h3>
+  <div class="math block" data-tex="P(X=k\mid\theta)\;=\;\frac{\exp\!\big[\sum_{h=0}^{k}a_j(\theta-b_{jh})\big]}{\sum_{r=0}^{m_j}\exp\!\big[\sum_{h=0}^{r}a_j(\theta-b_{jh})\big]}"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi>P</mi><mo stretchy="false">(</mo><mi>X</mi><mo>=</mo><mi>k</mi><mo>∣</mo><mi>θ</mi><mo stretchy="false">)</mo>  <mo>=</mo>  <mfrac><mrow><mi>exp</mi><mo>⁡</mo> ⁣<mo fence="false" stretchy="true" minsize="1.2em" maxsize="1.2em">[</mo><munderover><mo>∑</mo><mrow><mi>h</mi><mo>=</mo><mn>0</mn></mrow><mi>k</mi></munderover><msub><mi>a</mi><mi>j</mi></msub><mo stretchy="false">(</mo><mi>θ</mi><mo>−</mo><msub><mi>b</mi><mrow><mi>j</mi><mi>h</mi></mrow></msub><mo stretchy="false">)</mo><mo fence="false" stretchy="true" minsize="1.2em" maxsize="1.2em">]</mo></mrow><mrow><munderover><mo>∑</mo><mrow><mi>r</mi><mo>=</mo><mn>0</mn></mrow><msub><mi>m</mi><mi>j</mi></msub></munderover><mi>exp</mi><mo>⁡</mo> ⁣<mo fence="false" stretchy="true" minsize="1.2em" maxsize="1.2em">[</mo><munderover><mo>∑</mo><mrow><mi>h</mi><mo>=</mo><mn>0</mn></mrow><mi>r</mi></munderover><msub><mi>a</mi><mi>j</mi></msub><mo stretchy="false">(</mo><mi>θ</mi><mo>−</mo><msub><mi>b</mi><mrow><mi>j</mi><mi>h</mi></mrow></msub><mo stretchy="false">)</mo><mo fence="false" stretchy="true" minsize="1.2em" maxsize="1.2em">]</mo></mrow></mfrac></mrow><annotation encoding="application/x-tex">P(X=k\mid\theta)\;=\;\frac{\exp\!\big[\sum_{h=0}^{k}a_j(\theta-b_{jh})\big]}{\sum_{r=0}^{m_j}\exp\!\big[\sum_{h=0}^{r}a_j(\theta-b_{jh})\big]}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 1em; vertical-align: -0.25em;"></span><span class="mord mathnormal" style="margin-right: 0.1389em;">P</span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right: 0.0785em;">X</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 1em; vertical-align: -0.25em;"></span><span class="mord mathnormal" style="margin-right: 0.0315em;">k</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">∣</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 1em; vertical-align: -0.25em;"></span><span class="mord mathnormal" style="margin-right: 0.0278em;">θ</span><span class="mclose">)</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 2.819em; vertical-align: -1.09em;"></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 1.729em;"><span class="" style="top: -2.26em;"><span class="pstrut" style="height: 3em;"></span><span class="mord"><span class="mop"><span class="mop op-symbol small-op" style="position: relative; top: 0em;">∑</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.8435em;"><span class="" style="top: -2.4337em; margin-left: 0em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0278em;">r</span><span class="mrel mtight">=</span><span class="mord mtight">0</span></span></span></span><span class="" style="top: -3.2421em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathnormal mtight">m</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3281em;"><span class="" style="top: -2.357em; margin-left: 0em; margin-right: 0.0714em;"><span class="pstrut" style="height: 2.5em;"></span><span class="sizing reset-size3 size1 mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2819em;"><span class=""></span></span></span></span></span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2663em;"><span class=""></span></span></span></span></span></span><span class="mspace" style="margin-right: 0.1667em;"></span><span class="mop">exp</span><span class="mspace" style="margin-right: -0.1667em;"></span><span class="mspace" style="margin-right: 0.1667em;"></span><span class="mord"><span class="delimsizing size1">[</span></span><span class="mspace" style="margin-right: 0.1667em;"></span><span class="mop"><span class="mop op-symbol small-op" style="position: relative; top: 0em;">∑</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.8043em;"><span class="" style="top: -2.4003em; margin-left: 0em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">h</span><span class="mrel mtight">=</span><span class="mord mtight">0</span></span></span></span><span class="" style="top: -3.2029em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0278em;">r</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2997em;"><span class=""></span></span></span></span></span></span><span class="mspace" style="margin-right: 0.1667em;"></span><span class="mord"><span class="mord mathnormal">a</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3117em;"><span class="" style="top: -2.55em; margin-left: 0em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2861em;"><span class=""></span></span></span></span></span></span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right: 0.0278em;">θ</span><span class="mspace" style="margin-right: 0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right: 0.2222em;"></span><span class="mord"><span class="mord mathnormal">b</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3361em;"><span class="" style="top: -2.55em; margin-left: 0em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">jh</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2861em;"><span class=""></span></span></span></span></span></span><span class="mclose">)</span><span class="mord"><span class="delimsizing size1">]</span></span></span></span><span class="" style="top: -3.23em;"><span class="pstrut" style="height: 3em;"></span><span class="frac-line" style="border-bottom-width: 0.04em;"></span></span><span class="" style="top: -3.74em;"><span class="pstrut" style="height: 3em;"></span><span class="mord"><span class="mop">exp</span><span class="mspace" style="margin-right: -0.1667em;"></span><span class="mspace" style="margin-right: 0.1667em;"></span><span class="mord"><span class="delimsizing size1">[</span></span><span class="mspace" style="margin-right: 0.1667em;"></span><span class="mop"><span class="mop op-symbol small-op" style="position: relative; top: 0em;">∑</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.989em;"><span class="" style="top: -2.4003em; margin-left: 0em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">h</span><span class="mrel mtight">=</span><span class="mord mtight">0</span></span></span></span><span class="" style="top: -3.2029em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0315em;">k</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2997em;"><span class=""></span></span></span></span></span></span><span class="mspace" style="margin-right: 0.1667em;"></span><span class="mord"><span class="mord mathnormal">a</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3117em;"><span class="" style="top: -2.55em; margin-left: 0em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2861em;"><span class=""></span></span></span></span></span></span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right: 0.0278em;">θ</span><span class="mspace" style="margin-right: 0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right: 0.2222em;"></span><span class="mord"><span class="mord mathnormal">b</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3361em;"><span class="" style="top: -2.55em; margin-left: 0em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">jh</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2861em;"><span class=""></span></span></span></span></span></span><span class="mclose">)</span><span class="mord"><span class="delimsizing size1">]</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 1.09em;"><span class=""></span></span></span></span></span><span class="mclose nulldelimiter"></span></span></span></span></span></span></div>
+  <ul>
+    <li>PCM / GPCM 建模的是<b>相邻类别的难易对比</b>（从 k−1 跨到 k 的这一步有多难），而 GRM 建模的是<b>累积概率</b>；</li>
+    <li>GPCM 的项目信息可写成 <span class="math" data-tex="I_j(\theta)=a_j^2\big[\mathbb{E}[k^2\mid\theta]-(\mathbb{E}[k\mid\theta])^2\big]"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>I</mi><mi>j</mi></msub><mo stretchy="false">(</mo><mi>θ</mi><mo stretchy="false">)</mo><mo>=</mo><msubsup><mi>a</mi><mi>j</mi><mn>2</mn></msubsup><mo fence="false" stretchy="true" minsize="1.2em" maxsize="1.2em">[</mo><mi mathvariant="double-struck">E</mi><mo stretchy="false">[</mo><msup><mi>k</mi><mn>2</mn></msup><mo>∣</mo><mi>θ</mi><mo stretchy="false">]</mo><mo>−</mo><mo stretchy="false">(</mo><mi mathvariant="double-struck">E</mi><mo stretchy="false">[</mo><mi>k</mi><mo>∣</mo><mi>θ</mi><mo stretchy="false">]</mo><msup><mo stretchy="false">)</mo><mn>2</mn></msup><mo fence="false" stretchy="true" minsize="1.2em" maxsize="1.2em">]</mo></mrow><annotation encoding="application/x-tex">I_j(\theta)=a_j^2\big[\mathbb{E}[k^2\mid\theta]-(\mathbb{E}[k\mid\theta])^2\big]</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 1.0361em; vertical-align: -0.2861em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right: 0.0785em;">I</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3117em;"><span class="" style="top: -2.55em; margin-left: -0.0785em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2861em;"><span class=""></span></span></span></span></span></span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right: 0.0278em;">θ</span><span class="mclose">)</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 1.2448em; vertical-align: -0.3948em;"></span><span class="mord"><span class="mord mathnormal">a</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.8141em;"><span class="" style="top: -2.4413em; margin-left: 0em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span></span></span><span class="" style="top: -3.063em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight">2</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.3948em;"><span class=""></span></span></span></span></span></span><span class="mord"><span class="delimsizing size1">[</span></span><span class="mord mathbb">E</span><span class="mopen">[</span><span class="mord"><span class="mord mathnormal" style="margin-right: 0.0315em;">k</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height: 0.8141em;"><span class="" style="top: -3.063em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight">2</span></span></span></span></span></span></span></span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">∣</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 1em; vertical-align: -0.25em;"></span><span class="mord mathnormal" style="margin-right: 0.0278em;">θ</span><span class="mclose">]</span><span class="mspace" style="margin-right: 0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right: 0.2222em;"></span></span><span class="base"><span class="strut" style="height: 1em; vertical-align: -0.25em;"></span><span class="mopen">(</span><span class="mord mathbb">E</span><span class="mopen">[</span><span class="mord mathnormal" style="margin-right: 0.0315em;">k</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">∣</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 1.2em; vertical-align: -0.35em;"></span><span class="mord mathnormal" style="margin-right: 0.0278em;">θ</span><span class="mclose">]</span><span class="mclose"><span class="mclose">)</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height: 0.8141em;"><span class="" style="top: -3.063em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight">2</span></span></span></span></span></span></span></span><span class="mord"><span class="delimsizing size1">]</span></span></span></span></span></span>，即<b>类别得分的条件方差</b>；</li>
+    <li>当 <span class="math" data-tex="m_j=1"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>m</mi><mi>j</mi></msub><mo>=</mo><mn>1</mn></mrow><annotation encoding="application/x-tex">m_j=1</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 0.7167em; vertical-align: -0.2861em;"></span><span class="mord"><span class="mord mathnormal">m</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3117em;"><span class="" style="top: -2.55em; margin-left: 0em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2861em;"><span class=""></span></span></span></span></span></span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 0.6444em;"></span><span class="mord">1</span></span></span></span></span> 时，GPCM 退化为 2PL，PCM 退化为 1PL —— 说明它们是二值模型的<b>严格推广</b>。</li>
+  </ul>
+</section>
+
+<section class="slide" data-part="Part 3 IRT 与 GRM/PCM">
+  <h2>3.6 GRM / GPCM 怎么选</h2>
+  <table>
+    <thead><tr><th style="width:18%">模型</th><th style="width:30%">建模对象</th><th style="width:22%">参数</th><th>适用</th></tr></thead>
+    <tbody>
+      <tr><td><b>GRM</b></td><td>累积概率 <span class="math" data-tex="P(X\ge k)"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>P</mi><mo stretchy="false">(</mo><mi>X</mi><mo>≥</mo><mi>k</mi><mo stretchy="false">)</mo></mrow><annotation encoding="application/x-tex">P(X\ge k)</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 1em; vertical-align: -0.25em;"></span><span class="mord mathnormal" style="margin-right: 0.1389em;">P</span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right: 0.0785em;">X</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">≥</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 1em; vertical-align: -0.25em;"></span><span class="mord mathnormal" style="margin-right: 0.0315em;">k</span><span class="mclose">)</span></span></span></span></span>，阈值 <span class="math" data-tex="b_{jk}"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>b</mi><mrow><mi>j</mi><mi>k</mi></mrow></msub></mrow><annotation encoding="application/x-tex">b_{jk}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 0.9805em; vertical-align: -0.2861em;"></span><span class="mord"><span class="mord mathnormal">b</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3361em;"><span class="" style="top: -2.55em; margin-left: 0em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0315em;">jk</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2861em;"><span class=""></span></span></span></span></span></span></span></span></span></span> 递增</td><td><span class="math" data-tex="a_j, b_{j1..m}"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>a</mi><mi>j</mi></msub><mo separator="true">,</mo><msub><mi>b</mi><mrow><mi>j</mi><mn>1..</mn><mi>m</mi></mrow></msub></mrow><annotation encoding="application/x-tex">a_j, b_{j1..m}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 0.9805em; vertical-align: -0.2861em;"></span><span class="mord"><span class="mord mathnormal">a</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3117em;"><span class="" style="top: -2.55em; margin-left: 0em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2861em;"><span class=""></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right: 0.1667em;"></span><span class="mord"><span class="mord mathnormal">b</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3117em;"><span class="" style="top: -2.55em; margin-left: 0em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span><span class="mord mtight">1..</span><span class="mord mathnormal mtight">m</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2861em;"><span class=""></span></span></span></span></span></span></span></span></span></span></td><td>Likert 量表、rubric 等级、"完全不会→全对"的整体等级</td></tr>
+      <tr><td><b>PCM</b></td><td>相邻类别难度步长 <span class="math" data-tex="\delta_{jk}"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>δ</mi><mrow><mi>j</mi><mi>k</mi></mrow></msub></mrow><annotation encoding="application/x-tex">\delta_{jk}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 0.9805em; vertical-align: -0.2861em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right: 0.0379em;">δ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3361em;"><span class="" style="top: -2.55em; margin-left: -0.0379em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0315em;">jk</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2861em;"><span class=""></span></span></span></span></span></span></span></span></span></span></td><td>仅 <span class="math" data-tex="\delta_{jk}"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>δ</mi><mrow><mi>j</mi><mi>k</mi></mrow></msub></mrow><annotation encoding="application/x-tex">\delta_{jk}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 0.9805em; vertical-align: -0.2861em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right: 0.0379em;">δ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3361em;"><span class="" style="top: -2.55em; margin-left: -0.0379em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0315em;">jk</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2861em;"><span class=""></span></span></span></span></span></span></span></span></span></span></td><td>分步解题、每个步骤难度可比；样本量小时更稳</td></tr>
+      <tr><td><b>GPCM</b></td><td>相邻类别步长 × 区分度</td><td><span class="math" data-tex="a_j, b_{jk}"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>a</mi><mi>j</mi></msub><mo separator="true">,</mo><msub><mi>b</mi><mrow><mi>j</mi><mi>k</mi></mrow></msub></mrow><annotation encoding="application/x-tex">a_j, b_{jk}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 0.9805em; vertical-align: -0.2861em;"></span><span class="mord"><span class="mord mathnormal">a</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3117em;"><span class="" style="top: -2.55em; margin-left: 0em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2861em;"><span class=""></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right: 0.1667em;"></span><span class="mord"><span class="mord mathnormal">b</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3361em;"><span class="" style="top: -2.55em; margin-left: 0em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0315em;">jk</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2861em;"><span class=""></span></span></span></span></span></span></span></span></span></span></td><td>最常用；想让不同题目有不同区分度时选它</td></tr>
+    </tbody>
+  </table>
+  <div class="box">
+    <div class="bt">实践中的选择规则</div>
+    数据少 / 只想稳健 → <b>PCM</b>；需要区分度 → <b>GPCM</b>；类别本身是"程度递进的整体等级"（很差/较差/一般/好/很好）→ <b>GRM</b>。三者在 <span class="math" data-tex="m_j=1"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>m</mi><mi>j</mi></msub><mo>=</mo><mn>1</mn></mrow><annotation encoding="application/x-tex">m_j=1</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 0.7167em; vertical-align: -0.2861em;"></span><span class="mord"><span class="mord mathnormal">m</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3117em;"><span class="" style="top: -2.55em; margin-left: 0em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2861em;"><span class=""></span></span></span></span></span></span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 0.6444em;"></span><span class="mord">1</span></span></span></span></span> 时都退化回二值模型，可以放在一起用似然比检验比较拟合。
+  </div>
+</section>
+
+
+
+
+
+<!-- ============ Part 4 ============ -->
+<section class="slide" data-part="Part 4 Jev 与 UQ">
+  <div class="kicker">PART 4</div>
+  <h2>Jev 模型，以及它对不确定性量化的启示</h2>
+  <h3>4.1 Jev 是什么</h3>
+  <p>TypeSafe AI 提出的 <b>System One（系统一）决策模型</b>。它<b>不生成自由文本</b>，而是：开发者预先声明问题与答案空间，模型只从这些选项里选，并给出<b>每个选项的校准概率</b>。</p>
+  <ul>
+    <li><b>非自回归</b>：一次性并行求值所有已声明的问题，而不是逐 token 生成；</li>
+    <li><b>RLCD</b>（Reinforcement Learning for Calibrated Decisions）：把"校准"直接写进训练目标；</li>
+    <li>定位：高频、有界、低延迟的<b>决策即服务</b>，而不是通用对话模型。</li>
+  </ul>
+  <div class="box">
+    <div class="bt">三种决策类型</div>
+    <b>Choice</b>（多选一，如 紧急/普通/低优先级）· <b>Score</b>（在定义标尺上打分 0–100）· <b>Yes/No 概率</b>（这句话为真的概率，如"这是账单问题？"→ 0.81）
+  </div>
+</section>
+
+<section class="slide" data-part="Part 4 Jev 与 UQ">
+  <h2>4.2 底层原理：softmax 之外，关键在训练目标</h2>
+  <h3>① 推理时：一次 softmax 得到条件分布</h3>
+  <div class="math block" data-tex="P(\text{答案}_k\mid x)\;=\;\frac{e^{z_k}}{\sum_{j}e^{z_j}}"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi>P</mi><mo stretchy="false">(</mo><msub><mtext>答案</mtext><mi>k</mi></msub><mo>∣</mo><mi>x</mi><mo stretchy="false">)</mo>  <mo>=</mo>  <mfrac><msup><mi>e</mi><msub><mi>z</mi><mi>k</mi></msub></msup><mrow><munder><mo>∑</mo><mi>j</mi></munder><msup><mi>e</mi><msub><mi>z</mi><mi>j</mi></msub></msup></mrow></mfrac></mrow><annotation encoding="application/x-tex">P(\text{答案}_k\mid x)\;=\;\frac{e^{z_k}}{\sum_{j}e^{z_j}}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 1em; vertical-align: -0.25em;"></span><span class="mord mathnormal" style="margin-right: 0.1389em;">P</span><span class="mopen">(</span><span class="mord"><span class="mord text"><span class="mord cjk_fallback">答案</span></span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3361em;"><span class="" style="top: -2.55em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0315em;">k</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.15em;"><span class=""></span></span></span></span></span></span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">∣</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 1em; vertical-align: -0.25em;"></span><span class="mord mathnormal">x</span><span class="mclose">)</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 2.4632em; vertical-align: -1.1218em;"></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 1.3414em;"><span class="" style="top: -2.314em;"><span class="pstrut" style="height: 3em;"></span><span class="mord"><span class="mop"><span class="mop op-symbol small-op" style="position: relative; top: 0em;">∑</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.162em;"><span class="" style="top: -2.4003em; margin-left: 0em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.4358em;"><span class=""></span></span></span></span></span></span><span class="mspace" style="margin-right: 0.1667em;"></span><span class="mord"><span class="mord mathnormal">e</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height: 0.6065em;"><span class="" style="top: -3.0051em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right: 0.044em;">z</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3281em;"><span class="" style="top: -2.357em; margin-left: -0.044em; margin-right: 0.0714em;"><span class="pstrut" style="height: 2.5em;"></span><span class="sizing reset-size3 size1 mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.2819em;"><span class=""></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span><span class="" style="top: -3.23em;"><span class="pstrut" style="height: 3em;"></span><span class="frac-line" style="border-bottom-width: 0.04em;"></span></span><span class="" style="top: -3.677em;"><span class="pstrut" style="height: 3em;"></span><span class="mord"><span class="mord"><span class="mord mathnormal">e</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height: 0.6644em;"><span class="" style="top: -3.063em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right: 0.044em;">z</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3448em;"><span class="" style="top: -2.3488em; margin-left: -0.044em; margin-right: 0.0714em;"><span class="pstrut" style="height: 2.5em;"></span><span class="sizing reset-size3 size1 mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0315em;">k</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.1512em;"><span class=""></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 1.1218em;"><span class=""></span></span></span></span></span><span class="mclose nulldelimiter"></span></span></span></span></span></span></div>
+  <p class="sub" style="text-align:center;">softmax 只负责"把分数变成概率"，它<b>不保证概率准</b>。</p>
+  <h3>② 第一段训练：学会判断</h3>
+  <div class="math block" data-tex="\mathcal{L}\;=\;-\log P(y^{*}\mid x)"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi mathvariant="script">L</mi>  <mo>=</mo>  <mo>−</mo><mi>log</mi><mo>⁡</mo><mi>P</mi><mo stretchy="false">(</mo><msup><mi>y</mi><mo lspace="0em" rspace="0em">∗</mo></msup><mo>∣</mo><mi>x</mi><mo stretchy="false">)</mo></mrow><annotation encoding="application/x-tex">\mathcal{L}\;=\;-\log P(y^{*}\mid x)</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 0.6833em;"></span><span class="mord mathcal">L</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 1em; vertical-align: -0.25em;"></span><span class="mord">−</span><span class="mspace" style="margin-right: 0.1667em;"></span><span class="mop">lo<span style="margin-right: 0.0139em;">g</span></span><span class="mspace" style="margin-right: 0.1667em;"></span><span class="mord mathnormal" style="margin-right: 0.1389em;">P</span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal" style="margin-right: 0.0359em;">y</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height: 0.7387em;"><span class="" style="top: -3.113em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight">∗</span></span></span></span></span></span></span></span></span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">∣</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 1em; vertical-align: -0.25em;"></span><span class="mord mathnormal">x</span><span class="mclose">)</span></span></span></span></span></div>
+  <p class="sub" style="text-align:center;">最小化交叉熵，让条件分布"大体正确"——但这只保证通常能选对，不保证数值可信。</p>
+  <h3>③ 第二段 RLCD：用恰当评分规则当奖励</h3>
+  <div class="math block" data-tex="r=\log P(y^{*}\mid x)\quad\text{或}\quad r=-\sum_{k}\big(p_k-\mathbf{1}\{k=y^{*}\}\big)^2"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi>r</mi><mo>=</mo><mi>log</mi><mo>⁡</mo><mi>P</mi><mo stretchy="false">(</mo><msup><mi>y</mi><mo lspace="0em" rspace="0em">∗</mo></msup><mo>∣</mo><mi>x</mi><mo stretchy="false">)</mo><mspace width="1em"></mspace><mtext>或</mtext><mspace width="1em"></mspace><mi>r</mi><mo>=</mo><mo>−</mo><munder><mo>∑</mo><mi>k</mi></munder><mo fence="false" stretchy="true" minsize="1.2em" maxsize="1.2em">(</mo><msub><mi>p</mi><mi>k</mi></msub><mo>−</mo><mn mathvariant="bold">1</mn><mo stretchy="false">{</mo><mi>k</mi><mo>=</mo><msup><mi>y</mi><mo lspace="0em" rspace="0em">∗</mo></msup><mo stretchy="false">}</mo><msup><mo fence="false" stretchy="true" minsize="1.2em" maxsize="1.2em">)</mo><mn>2</mn></msup></mrow><annotation encoding="application/x-tex">r=\log P(y^{*}\mid x)\quad\text{或}\quad r=-\sum_{k}\big(p_k-\mathbf{1}\{k=y^{*}\}\big)^2</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 0.4306em;"></span><span class="mord mathnormal" style="margin-right: 0.0278em;">r</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 1em; vertical-align: -0.25em;"></span><span class="mop">lo<span style="margin-right: 0.0139em;">g</span></span><span class="mspace" style="margin-right: 0.1667em;"></span><span class="mord mathnormal" style="margin-right: 0.1389em;">P</span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal" style="margin-right: 0.0359em;">y</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height: 0.7387em;"><span class="" style="top: -3.113em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight">∗</span></span></span></span></span></span></span></span></span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">∣</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 1em; vertical-align: -0.25em;"></span><span class="mord mathnormal">x</span><span class="mclose">)</span><span class="mspace" style="margin-right: 1em;"></span><span class="mord text"><span class="mord cjk_fallback">或</span></span><span class="mspace" style="margin-right: 1em;"></span><span class="mord mathnormal" style="margin-right: 0.0278em;">r</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 2.3521em; vertical-align: -1.3021em;"></span><span class="mord">−</span><span class="mspace" style="margin-right: 0.1667em;"></span><span class="mop op-limits"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 1.05em;"><span class="" style="top: -1.8479em; margin-left: 0em;"><span class="pstrut" style="height: 3.05em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0315em;">k</span></span></span></span><span class="" style="top: -3.05em;"><span class="pstrut" style="height: 3.05em;"></span><span class=""><span class="mop op-symbol large-op">∑</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 1.3021em;"><span class=""></span></span></span></span></span><span class="mspace" style="margin-right: 0.1667em;"></span><span class="mord"><span class="delimsizing size1">(</span></span><span class="mord"><span class="mord mathnormal">p</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height: 0.3361em;"><span class="" style="top: -2.55em; margin-left: 0em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right: 0.0315em;">k</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height: 0.15em;"><span class=""></span></span></span></span></span></span><span class="mspace" style="margin-right: 0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right: 0.2222em;"></span></span><span class="base"><span class="strut" style="height: 1em; vertical-align: -0.25em;"></span><span class="mord mathbf">1</span><span class="mopen">{</span><span class="mord mathnormal" style="margin-right: 0.0315em;">k</span><span class="mspace" style="margin-right: 0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right: 0.2778em;"></span></span><span class="base"><span class="strut" style="height: 1.404em; vertical-align: -0.35em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right: 0.0359em;">y</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height: 0.7387em;"><span class="" style="top: -3.113em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight">∗</span></span></span></span></span></span></span></span></span><span class="mclose">}</span><span class="mord"><span class="mord"><span class="delimsizing size1">)</span></span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height: 1.054em;"><span class="" style="top: -3.3029em; margin-right: 0.05em;"><span class="pstrut" style="height: 2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight">2</span></span></span></span></span></span></span></span></span></span></span></span></div>
+  <div class="box good">
+    <div class="bt">为什么这能校准：这是数学保证，不是技巧</div>
+    恰当评分规则的性质是——<b>只有当输出等于真实条件概率时，期望评分才最优</b>。把 0.6 虚报成 0.9，一旦猜错惩罚极重，期望上得不偿失。于是策略梯度会一路把输出分布"拽"向真实分布：<b>校准是被奖励结构逼出来的，不是事后打补丁。</b>
+  </div>
+</section>
+
+<section class="slide" data-part="Part 4 Jev 与 UQ">
+  <h2>4.3 Jev vs 生成式 LLM</h2>
+  <table>
+    <thead><tr><th style="width:18%">维度</th><th style="width:41%">Jev</th><th>生成式 LLM</th></tr></thead>
+    <tbody>
+      <tr><td>根本任务</td><td>做<b>决策</b>（选择 / 打分 / 是否概率）</td><td>做<b>生成</b>与推理</td></tr>
+      <tr><td>输出</td><td>预定义、<b>类型安全</b>的固定结果</td><td>开放式自由文本</td></tr>
+      <tr><td>答案空间</td><td>事先由开发者界定</td><td>开放、不确定</td></tr>
+      <tr><td>架构</td><td>非自回归，单次并行前向</td><td>自回归逐 token 预测</td></tr>
+      <tr><td>速度 / 成本</td><td>约 70–500ms；输出近乎不计成本</td><td>随长度与难度显著上升</td></tr>
+      <tr><td>置信度</td><td><b>原生输出校准概率</b></td><td>需单独设计或估计</td></tr>
+      <tr><td>集成</td><td>类型化结果直接进程序逻辑</td><td>需 schema、校验、护栏</td></tr>
+    </tbody>
+  </table>
+  <div class="box warn">
+    <div class="bt">它的硬边界</div>
+    不会写作、不会对话、不做慢思考推理；<b>答案空间必须预先枚举</b>，无法处理未知结果的问题；模糊或高风险情况仍需 LLM / 人工兜底。
+  </div>
+</section>
+
+<section class="slide" data-part="Part 4 Jev 与 UQ">
+  <h2>4.4 实际架构：级联（Cascade），而非二选一</h2>
+  <pre>Jev 高频有界决策层  ── 置信度高 ──▶  直接执行
+        │
+        └─ 置信度低 / 模糊 ──▶  升级给大模型  ──▶  仍不确定 ──▶  人工</pre>
+  <p><b>典型例子 · PII 预检</b>：客户请求先经 Jev 分类为「可发送 / 需匿名化 / 不确定」，只有"可发送"才真正调用昂贵的云端 LLM——既控风险又省钱。这避免了"一个大模型包办全流程"带来的高成本与高延迟。</p>
+  <div class="box pur">
+    <div class="bt">一个诚实的判断</div>
+    从数学本质看，Jev <b>就是一个分类器</b>，和逻辑回归、softmax 分类器没有范式级区别。真正的新东西在<b>工程定位、训练目标与产品形态</b>：把"校准"从后处理步骤提升为训练的直接优化目标，并做成高频低延迟的服务。
+  </div>
+</section>
+
+<section class="slide" data-part="Part 4 Jev 与 UQ">
+  <h2>4.5 对不确定性量化的五条启示</h2>
+  <ol>
+    <li><b>约束输出空间，不确定性才有意义。</b>Jev 之所以能给出可靠的 0.77，是因为答案被锁死在有限集合里。这印证了语义熵 / 自我一致性路线的合理性——做 UQ 时先把开放题改写成有界选择。</li>
+    <li><b>校准应进入训练目标，而不是事后补丁。</b>多数 LLM UQ 是温度缩放、Platt、分箱等后处理；RLCD 证明可以端到端优化。可做方向：用 <span class="math" data-tex="-\text{Brier}"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo>−</mo><mtext>Brier</mtext></mrow><annotation encoding="application/x-tex">-\text{Brier}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 0.7667em; vertical-align: -0.0833em;"></span><span class="mord">−</span><span class="mord text"><span class="mord">Brier</span></span></span></span></span></span> 或对数评分作奖励做偏好优化（类似 DPO/RLHF，但奖励换成"概率是否诚实"）。</li>
+  </ol>
+  <div class="box warn">
+    <div class="bt">它够不到、正是你主场的三件事</div>
+    <b>发散性 / 语义不确定性</b>（没有预定义答案空间）· <b>长链推理中的置信传播</b>（过程级 UQ）· <b>幻觉与事实性不确定</b>（自信地胡说）。
+  </div>
+</section>
+
+<section class="slide" data-part="Part 4 Jev 与 UQ">
+  <h2>4.6 一个可落地的研究设计</h2>
+  <div class="box good">
+    <div class="bt">"约束空间 + 校准奖励"组合拳</div>
+    <ol>
+      <li>对同一批题，先用提示把开放题改写成<b>有界选择</b>，让闭源模型直接吐出选项概率分布；</li>
+      <li>同时采集 <b>口头置信</b> 与 <b>采样一致性</b> 两个代理信号；</li>
+      <li>若具备微调条件，用<b>恰当评分规则</b>（对数评分 / Brier）作为目标做一轮校准微调；</li>
+      <li>在<b>同分布</b>与<b>跨分布漂移</b>两种条件下，比较三种信号的 Brier 与 ECE；</li>
+      <li>再用二值 3PL 与多级 GPCM 分别估一次能力 <span class="math" data-tex="\theta"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>θ</mi></mrow><annotation encoding="application/x-tex">\theta</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height: 0.6944em;"></span><span class="mord mathnormal" style="margin-right: 0.0278em;">θ</span></span></span></span></span>，看<b>评分粒度</b>对排名的影响。</li>
+    </ol>
+  </div>
+  <p>这个设计一次性产出三张有价值的对比表：<b>① 哪个代理信号最可信；② 只看准确率会错误排名哪些模型；③ 多级评分比二值评分多多少信息。</b>它们正好是主流榜单普遍缺失的三栏。</p>
+  <div class="box">
+    <div class="bt">造标签的最小套路（只要 0/1 正确性即可）</div>
+    模型 zero-shot 作答 → 按题型/科目<b>分桶</b> → 用该桶的<b>经验准确率</b>当标签 → 微调或用 few-shot（随机 k-shot + EV 解码）让其输出校准置信。
+  </div>
+</section>
+
+<!-- ============ 总结 ============ -->
+<section class="slide" data-part="总结">
+  <h2>总结</h2>
+  <table>
+    <thead><tr><th style="width:16%">部分</th><th style="width:34%">现有做法</th><th>可改进之处</th></tr></thead>
+    <tbody>
+      <tr><td><b>Benchmark</b></td><td>accuracy / pass@k / ELO 排名</td><td>饱和与污染；缺校准维度；差距常不过显著性检验</td></tr>
+      <tr><td><b>自评置信度</b></td><td>口头置信 + 事后校准</td><td>把校准写进训练目标；验证必须区分判别力与校准</td></tr>
+      <tr><td><b>IRT</b></td><td>二值 1PL/2PL/3PL</td><td>有序多级场景换 GRM/GPCM；MCQ 不能硬套，用 3PL 的 c</td></tr>
+      <tr><td><b>Jev</b></td><td>受限空间 + RLCD</td><td>启示：约束空间、校准入训练目标、不确定度当路由器</td></tr>
+    </tbody>
+  </table>
+  <div class="box pur">
+    <div class="bt">一句话主线</div>
+    现有评测把"模型有多确定"的信息丢在了三个地方：<b>打分时被二值化</b>、<b>排名时被准确率取代</b>、<b>报告时被省略</b>。把这三层分别补回来 —— 用<b>多级评分</b>（GRM/GPCM）、用<b>恰当评分规则</b>（Brier/NLL）排名、并在报告里固定加上<b>校准与不确定度</b>两栏。
+  </div>
+</section>
+
+
+
+    </div>
+
+    <div id="foot">
+      <button id="fPrev">←</button>
+      <span id="page">7 / 22</span>
+      <button id="fNext">→</button>
+    </div>
+  </main>
+</div>
+
+<script>
+(function(){
+  var deck = document.getElementById('deck');
+  var slides = function(){ return Array.prototype.slice.call(deck.querySelectorAll('.slide')); };
+  var cur = 0;
+  var nav = document.getElementById('nav');
+
+  /* ---------- 公式 ---------- */
+  function renderMath(){
+    var list = deck.querySelectorAll('.math[data-tex]');
+    for (var i=0;i<list.length;i++){
+      var el = list[i], tex = el.getAttribute('data-tex') || '';
+      el.innerHTML = '';
+      if (typeof katex === 'undefined'){ el.classList.add('fallback'); continue; }
+      el.classList.remove('fallback');
+      try{
+        katex.render(tex, el, {throwOnError:false, displayMode: el.classList.contains('block')});
+      }catch(e){ el.classList.add('fallback'); }
+    }
+  }
+
+  /* ---------- 导航 ---------- */
+  function buildNav(){
+    if (!nav) return;
+    var html = '', lastPart = '';
+    var arr = slides();
+    arr.forEach(function(s,i){
+      var part = s.getAttribute('data-part') || '其他';
+      if (part !== lastPart){ html += '<div class="grp">'+part+'</div>'; lastPart = part; }
+      var h = s.querySelector('h2') || s.querySelector('h1');
+      var t = h ? h.textContent.trim().replace(/\s+/g,' ').slice(0,26) : ('第 '+(i+1)+' 页');
+      html += '<a data-i="'+i+'">'+(i+1)+'. '+t+'</a>';
+    });
+    nav.innerHTML = html;
+    Array.prototype.forEach.call(nav.querySelectorAll('a'), function(a){
+      a.addEventListener('click', function(){ go(parseInt(a.getAttribute('data-i'),10)); });
+    });
+  }
+
+  function go(i){
+    var arr = slides();
+    if (i<0) i=0; if (i>=arr.length) i=arr.length-1;
+    arr.forEach(function(s){ s.classList.remove('active'); });
+    arr[i].classList.add('active');
+    cur = i;
+    document.getElementById('page').textContent = (i+1)+' / '+arr.length;
+    if (nav){
+      Array.prototype.forEach.call(nav.querySelectorAll('a'), function(a,idx){
+        a.classList.toggle('cur', idx===i);
+      });
+    }
+    window.scrollTo(0,0);
+  }
+
+  /* ---------- 编辑模式 ---------- */
+  function setEdit(on){
+    document.body.classList.toggle('editing', on);
+    document.getElementById('btnEdit').classList.toggle('on', on);
+    var arr = slides();
+    arr.forEach(function(s){
+      if (on){ s.setAttribute('contenteditable','true'); }
+      else { s.removeAttribute('contenteditable'); }
+    });
+    if (!on){ syncMathFromDom(); buildNav(); }
+    renderMath();
+    document.getElementById('hint').textContent = on
+      ? '编辑中：直接改文字，双击公式改 LaTeX'
+      : '← → 翻页 · E 编辑 · F 全屏';
+  }
+
+  function syncMathFromDom(){
+    // 编辑模式下公式以 $...$ 文本呈现，退出时无需写回；此处仅清理
+    var list = deck.querySelectorAll('.math[data-tex]');
+    for (var i=0;i<list.length;i++){ list[i].innerHTML=''; }
+  }
+
+  deck.addEventListener('dblclick', function(e){
+    if (!document.body.classList.contains('editing')) return;
+    var m = e.target.closest ? e.target.closest('.math[data-tex]') : null;
+    if (!m) return;
+    var old = m.getAttribute('data-tex') || '';
+    var v = window.prompt('编辑 LaTeX（不含 $ 符号）', old);
+    if (v !== null){ m.setAttribute('data-tex', v); renderMath(); save(); }
+  });
+
+  /* ---------- 保存 / 读取 ---------- */
+  function save(){
+    try{ localStorage.setItem('deck_html', deck.innerHTML); }catch(e){}
+  }
+  function loadSaved(){
+    var s = null;
+    try{ s = localStorage.getItem('deck_html'); }catch(e){}
+    if (s){ deck.innerHTML = s; }
+  }
+
+  /* ---------- 增删改 ---------- */
+  function addSlide(){
+    var s = document.createElement('section');
+    s.className = 'slide';
+    s.setAttribute('data-part','新增页');
+    s.innerHTML = '<h2>新的一页</h2><p>在这里填写内容。可用公式：<span class="math" data-tex="\\theta"></span></p>';
+    deck.appendChild(s);
+    renderMath(); buildNav(); go(slides().length-1); save();
+  }
+  function delSlide(){
+    var arr = slides();
+    if (arr.length<=1){ alert('至少保留一页'); return; }
+    if (!confirm('删除第 '+(cur+1)+' 页？')) return;
+    arr[cur].remove(); renderMath(); buildNav(); go(Math.min(cur, slides().length-1)); save();
+  }
+
+  /* ---------- 导出 ---------- */
+  function download(name, text, mime){
+    var blob = new Blob([text], {type: mime || 'text/plain;charset=utf-8'});
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click();
+    setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 500);
+  }
+
+  function exportHtml(){
+    var clone = document.documentElement.cloneNode(true);
+    var cdeck = clone.querySelector('#deck');
+    var cs = cdeck.querySelectorAll('.slide');
+    for (var i=0;i<cs.length;i++){
+      cs[i].removeAttribute('contenteditable');
+      cs[i].classList.remove('active');
+    }
+    if (cs[0]) cs[0].classList.add('active');
+    clone.querySelector('body').classList.remove('editing');
+    download('组会汇报_大模型评测与不确定性量化.html',
+      '<!DOCTYPE html>\n' + clone.outerHTML, 'text/html;charset=utf-8');
+  }
+
+  function nodeToMd(node){
+    var out = [], kids = node.childNodes;
+    for (var i=0;i<kids.length;i++){
+      var n = kids[i];
+      if (n.nodeType === 3){ var t = n.textContent.replace(/\s+/g,' '); if (t.trim()) out.push(t); continue; }
+      if (n.nodeType !== 1) continue;
+      var tag = n.tagName.toLowerCase();
+      if (tag === 'h1') out.push('# ' + txt(n));
+      else if (tag === 'h2') out.push('## ' + txt(n));
+      else if (tag === 'h3') out.push('### ' + txt(n));
+      else if (tag === 'p' || tag === 'div' && !n.querySelector('table')) out.push(txt(n));
+      else if (tag === 'li') out.push('- ' + txt(n));
+      else if (tag === 'pre') out.push('```\n' + n.textContent + '\n```');
+      else if (tag === 'table'){
+        var rows = n.querySelectorAll('tr'), md = [];
+        for (var r=0;r<rows.length;r++){
+          var cells = rows[r].querySelectorAll('th,td'), line = [];
+          for (var c=0;c<cells.length;c++) line.push(txt(cells[c]).replace(/\|/g,'\\|'));
+          md.push('| ' + line.join(' | ') + ' |');
+          if (r===0) md.push('|' + line.map(function(){return '---';}).join('|') + '|');
+        }
+        out.push(md.join('\n'));
+      }
+      else if (n.classList && n.classList.contains('math')){
+        var tex = n.getAttribute('data-tex') || '';
+        out.push(n.classList.contains('block') ? '$$'+tex+'$$' : '$'+tex+'$');
+      }
+      else if (n.childNodes.length){ out.push(nodeToMd(n)); }
+    }
+    return out.filter(function(x){return x && x.trim();}).join('\n\n');
+  }
+  function txt(n){
+    var c = n.cloneNode(true);
+    var ms = c.querySelectorAll('.math[data-tex]');
+    for (var i=0;i<ms.length;i++){
+      var tex = ms[i].getAttribute('data-tex') || '';
+      var rep = ms[i].classList.contains('block') ? ('$$'+tex+'$$') : ('$'+tex+'$');
+      ms[i].textContent = rep;
+    }
+    return c.textContent.replace(/\s+/g,' ').trim();
+  }
+
+  function exportMd(){
+    var arr = slides(), parts = [];
+    arr.forEach(function(s){
+      var h = s.querySelector('h1');
+      parts.push('<!-- 第 '+(arr.indexOf(s)+1)+' 页 -->\n\n' + nodeToMd(s));
+    });
+    download('组会汇报.md', parts.join('\n\n---\n\n'), 'text/markdown;charset=utf-8');
+  }
+
+  /* ---------- 绑定 ---------- */
+  document.getElementById('btnPrev').onclick = function(){ go(cur-1); };
+  document.getElementById('btnNext').onclick = function(){ go(cur+1); };
+  document.getElementById('fPrev').onclick = function(){ go(cur-1); };
+  document.getElementById('fNext').onclick = function(){ go(cur+1); };
+  document.getElementById('btnEdit').onclick = function(){
+    setEdit(!document.body.classList.contains('editing'));
+  };
+  document.getElementById('btnAdd').onclick = addSlide;
+  document.getElementById('btnDel').onclick = delSlide;
+  document.getElementById('btnSave').onclick = function(){
+    if (document.body.classList.contains('editing')) setEdit(false);
+    save(); alert('已保存到本浏览器（刷新后仍在）');
+  };
+  document.getElementById('btnMd').onclick = exportMd;
+  document.getElementById('btnHtml').onclick = exportHtml;
+  document.getElementById('btnPrint').onclick = function(){ window.print(); };
+  document.getElementById('btnReset').onclick = function(){
+    if (confirm('清空本地修改，恢复初始内容？')){ try{localStorage.removeItem('deck_html');}catch(e){} location.reload(); }
+  };
+
+  document.addEventListener('keydown', function(e){
+    if (document.body.classList.contains('editing') &&
+        (e.target.isContentEditable || /INPUT|TEXTAREA/.test(e.target.tagName))) return;
+    if (e.key === 'ArrowLeft'){ go(cur-1); }
+    else if (e.key === 'ArrowRight'){ go(cur+1); }
+    else if (e.key === 'e' || e.key === 'E'){ setEdit(!document.body.classList.contains('editing')); }
+    else if (e.key === 'f' || e.key === 'F'){
+      if (!document.fullscreenElement){ document.documentElement.requestFullscreen(); }
+      else { document.exitFullscreen(); }
+    }
+  });
+
+  /* ---------- 启动 ---------- */
+  loadSaved();
+  renderMath();
+  buildNav();
+  go(0);
+  // 定时保存，避免编辑内容丢失
+  setInterval(function(){ if (document.body.classList.contains('editing')) save(); }, 5000);
+})();
+</script>
+
+
+</body></html>
